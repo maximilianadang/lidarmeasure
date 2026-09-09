@@ -1,0 +1,21 @@
+{
+  "rows": 1000,
+  "bin_width_ns": 0.08,
+  "span_ns": 80.0,
+  "counts_by_channel": [
+    0,
+    1162,
+    0,
+    0,
+    0
+  ],
+  "peak_bin_zero_based": 291,
+  "peak_bin_start_ns": 23.28,
+  "peak_counts": 54,
+  "peak_region_ns": [
+    21.52,
+    24.48
+  ],
+  "peak_region_counts": 1066,
+  "centroid_ns": 22.889681050656662
+}

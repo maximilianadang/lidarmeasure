@@ -1,0 +1,20 @@
+{
+  "device_serial": "1052684",
+  "reference": "SYNC",
+  "detector": "CH1",
+  "detector_api_index": 0,
+  "detector_trigger_mV": -170,
+  "detector_trigger_edge": "rising",
+  "expected_pulse_rate_Hz": 10000000,
+  "pulse_source": "laser internally set to 10 MHz",
+  "histogram_bin_width_ps": 80,
+  "histogram_num_bins": 1000,
+  "sync_trigger_mV": -170,
+  "sync_trigger_edge": "rising",
+  "sync_divider": 1,
+  "measured_sync_rate_Hz": 10000060,
+  "trigger_output_period_100ns": 0,
+  "acquisition_mode": "T3",
+  "histogram_num_bins_native": 32768,
+  "histogram_num_bins_exported": 1000
+}

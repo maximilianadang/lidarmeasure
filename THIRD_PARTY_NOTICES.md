@@ -1,0 +1,26 @@
+# Third-party notices
+
+The example in `examples/histogram-simple.py` is adapted from PicoQuant's
+`demos/Demo_HistogramSimple.py`:
+https://github.com/PicoQuant/snAPI/blob/main/demos/Demo_HistogramSimple.py
+
+PicoQuant's software and its binary drivers are downloaded separately and are
+not included in this repository. The following notice accompanies snAPI's
+published distribution and is retained for the adapted example.
+
+Disclaimer
+PicoQuant GmbH disclaims all warranties with regard to the supplied software and documentation including all implied warranties of merchantability
+and fitness for a particular purpose. In no case shall PicoQuant GmbH be liable for any direct, indirect or consequential damages or any material
+or immaterial damages whatsoever resulting from loss of data, time or profits; arising from use, inability to use, or performance of this software
+and associated documentation.
+
+License and Copyright Notice
+Along with the purchase of a PicoQuant TCSPC module with DLL option you have also purchased a license to use the snAPI software. You have not
+purchased any other rights to the software itself. The software is protected by copyright and intellectual property laws. You may not distribute
+the software to third parties or reverse engineer, decompile or disassemble the software or part thereof. You may use and modify demo code to
+create your own software. Original or modified demo code may be re–distributed, provided that the original disclaimer and copyright notes are
+not removed from it. Copyright of the manual and on–line documentation belongs to PicoQuant GmbH. No parts of it may be reproduced, translated
+or transferred to third parties without written permission of PicoQuant GmbH.
+Products and corporate names appearing in this software and associated documentation may or may not be registered trademarks or subject to
+copyrights of their respective owners. PicoQuant GmbH claims no rights to any such trademarks. They are used only for identification or explanation
+and to the owner’s benefit, without intent to infringe.

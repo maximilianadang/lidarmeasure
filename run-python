@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export LIDAR_RUNTIME_DIR="${LIDAR_RUNTIME_DIR:-$repo_dir/.runtime}"
+if [[ ! -x "$LIDAR_RUNTIME_DIR/qemu-current/usr/bin/qemu-x86_64" ]]; then
+  echo "Runtime missing. Set LIDAR_RUNTIME_DIR or follow docs/arm64-setup.md." >&2
+  exit 1
+fi
+export OPENBLAS_NUM_THREADS=1
+export PYTHONPATH="$LIDAR_RUNTIME_DIR/package/snapi-1.1.2${PYTHONPATH:+:$PYTHONPATH}"
+cd "$repo_dir"
+exec "$LIDAR_RUNTIME_DIR/qemu-current/usr/bin/qemu-x86_64" -cpu max   -L "$LIDAR_RUNTIME_DIR/runtime"   -E "LD_LIBRARY_PATH=$LIDAR_RUNTIME_DIR/libusb-local/lib:$LIDAR_RUNTIME_DIR/runtime/usr/lib/x86_64-linux-gnu:$LIDAR_RUNTIME_DIR/python/lib:$LIDAR_RUNTIME_DIR/package/snapi-1.1.2/snAPI"   "$LIDAR_RUNTIME_DIR/python/bin/python3" "$@"
