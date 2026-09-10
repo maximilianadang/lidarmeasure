@@ -25,7 +25,7 @@
       "mode": "T2",
       "duration_ms": 28800000,
       "window_ms": 100,
-      "max_records": 2000000,
+      "max_records": 12000000,
       "save_ptu": false,
       "poll_ms": 100,
       "min_free_disk_gb": 10,

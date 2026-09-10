@@ -46,7 +46,7 @@ def hardware_flags(sn, mode):
     library = Path(os.environ['LIDAR_RUNTIME_DIR']) / 'package/snapi-1.1.2/snAPI/libmhlib.so'
     flags = ct.c_int()
     rc = ct.CDLL(str(library)).MH_GetFlags(ct.c_int(sn.deviceConfig['Index']), ct.byref(flags))
-    mask = 0x16 if mode == 'T3' else 0x12
+    mask = 0x5e if mode == 'T3' else 0x5a
     if rc < 0 or flags.value & mask:
         raise RuntimeError(f'Hardware flags check failed: rc={rc}, flags={flags.value}')
     return flags.value
@@ -102,9 +102,18 @@ def run(profile_name):
             summary.update(rates_before_Hz=rates, config=sn.deviceConfig)
             check_rates(settings, rates)
             acquire = events if profile_name == 'waterfall' else histogram
-            options = {'check_health': lambda: hardware_flags(sn, profile['mode'])} if profile_name == 'waterfall' else {}
-            summary.update(acquire(sn, measurement, settings, profile, out, rates, **options))
+            # MHLib calls must not race snAPI's acquisition worker. Check flags after it finishes.
+            summary.update(acquire(sn, measurement, settings, profile, out, rates))
             summary.update(check_acquisition(sn, profile['mode'], summary.get('stop_requested', False)))
+        # Vendor warnings may be transient and absent from final flags. Logs are flushed on close.
+        warnings = []
+        for log in (out / 'snapi').rglob('*.log'):
+            for line in log.open(errors='replace'):
+                if any(term in line.lower() for term in ('cnts_dropped', 'buffer overrun', 'buffer full')):
+                    warnings.append(line.strip())
+        if warnings:
+            summary['data_integrity_warnings'] = list(dict.fromkeys(warnings))
+            raise RuntimeError('Native log reports dropped counts or buffer exhaustion; saved data is suspect')
         summary['status'] = 'plotting'
         write_json(out / 'summary.json', summary)
         generate_plots(out, script='plot_waterfall.py' if profile_name == 'waterfall' else 'plot_histogram.py')

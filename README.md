@@ -106,10 +106,10 @@ previously committed blocks remain readable after an abrupt exit.
 
 Streaming settings in the same JSON profile:
 
-- `max_records: 2000000`: capacity of each API block, no longer the full run.
-  The API allocates two buffers (about 36 MB combined), plus processing copies.
+- `max_records: 12000000`: capacity of each API block, no longer the full run.
+  The API allocates two buffers (about 216 MB combined), plus processing copies.
 - `poll_ms: 1000`: read/write interval. The script checks initial rate headroom
-  against this interval and checks hardware flags after each block.
+  against this interval with integrity checks after acquisition to avoid racing the snAPI worker.
 - `min_free_disk_gb: 10`: stop with an explicit failed status when disk free space
   falls below the reserve. Already committed blocks remain available.
 - `window_ms: 100`: requested analysis window.
@@ -251,3 +251,9 @@ events/second. Waterfall analysis builds the same 800 ps bins from the saved
 per-event delays; the static histogram is built by snAPI. T2's increased USB and
 processing load requires sustained hardware validation on our emulated runtime.
 The pulse-period ambiguity and baffle calibration are unchanged by switching modes.
+
+Live T2 validation required a 12-million-record block capacity: snAPI delivered
+batches exceeding four million records despite a 100 ms polling request. Direct
+MHLib calls during the snAPI acquisition worker caused DEVICE_LOCKED errors and
+are no longer made. End-of-run validation checks hardware flags, acquisition
+metadata, and native logs for transient dropped-count or buffer-overrun warnings.
