@@ -47,7 +47,7 @@ class LifecycleTests(unittest.TestCase):
             with patch('acquisition.ROOT', root), patch('acquisition.load_settings', return_value=(settings, profile)), patch('acquisition.snapshot_settings', snapshot), patch('acquisition.device_session', session), patch('acquisition.histogram', capture), patch('acquisition.check_rates'), patch('acquisition.check_acquisition', return_value={}), patch('acquisition.generate_plots', side_effect=RuntimeError('plot failed')), patch.dict('os.environ', LIDAR_RUNTIME_DIR='/tmp'), patch('acquisition.time.sleep'):
                 with self.assertRaisesRegex(RuntimeError, 'plot failed'):
                     acquisition.run('capture')
-            out = next((root/'output'/'runs').iterdir())
+            out = next((root/'output').iterdir())
             self.assertEqual(json.loads((out/'summary.json').read_text())['status'], 'failed')
             self.assertTrue((out/'histogram.npz').exists())
             self.assertFalse((root/'output'/'latest-measurement.txt').exists())

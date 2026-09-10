@@ -11,6 +11,7 @@ import time
 import numpy as np
 from capture_config import ROOT, load_settings, snapshot_settings, configure, check_rates, check_histogram
 from plotting import generate_plots
+from run_paths import create_run
 from stream_capture import stream_events as events, atomic_json
 
 
@@ -82,8 +83,7 @@ def histogram(sn, measurement, settings, profile, out, rates):
 def run(profile_name):
     settings, profile = load_settings(profile_name)
     output = Path(settings.get('output_dir', ROOT / 'output'))
-    out = output / 'runs' / (profile_name + '-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
-    out.mkdir(parents=True)
+    out = Path(os.environ['LIDAR_RUN_DIR']) if os.environ.get('LIDAR_RUN_DIR') else create_run(output, profile_name)
     snapshot_settings(settings, out)
     summary = dict(schema_version=1, profile_name=profile_name, status='acquiring',
                    started_utc=datetime.now(timezone.utc).isoformat(), duration_ms=profile['duration_ms'],

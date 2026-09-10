@@ -2,6 +2,8 @@ import os
 import ctypes as ct
 import json
 import platform
+import configparser
+from run_paths import create_run
 from pathlib import Path
 
 base = Path(__file__).resolve().parent
@@ -13,7 +15,14 @@ version = ct.create_string_buffer(32)
 print("MH_GetLibraryVersion:", lib.MH_GetLibraryVersion(version), version.value.decode(), flush=True)
 from snAPI.Main import snAPI
 print("snAPI imported", flush=True)
-sn = snAPI(str(base / "system.ini"))
+out = Path(os.environ['LIDAR_RUN_DIR']) if os.environ.get('LIDAR_RUN_DIR') else create_run(base / 'output', 'probe')
+config = configparser.ConfigParser()
+config.optionxform = str
+config.read(base / 'system.ini')
+config['Paths']['Data'] = str(out / 'snapi')
+with (out / 'system.ini').open('w') as handle:
+    config.write(handle)
+sn = snAPI(str(out / 'system.ini'))
 try:
     ok = sn.getDeviceIDs()
     print("Enumeration:", ok, "IDs:", sn.deviceIDs, flush=True)

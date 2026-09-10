@@ -50,7 +50,7 @@ checked by snAPI when the INI is applied.
 
 ## What each run saves
 
-Every run has a unique directory under `output/runs/`. The command prints its
+Every run has a unique directory under `output/`. The command prints its
 profile, settings source, duration and output directory.
 
 All runs save copies of the JSON and both INIs, and a common `summary.json` with:
@@ -189,16 +189,19 @@ they do not by themselves recalibrate or implement modulo-range wrapping.
 The existing reference was measured at 10 MHz and must be verified/recalibrated
 before treating plots at the new repetition rate as calibrated physical ranges.
 
-All generated files now live in the repository's `output/` directory by default:
+Each command creates one `output/TIMESTAMP-TYPE/` directory (`capture`,
+`waterfall`, `vendor-demo`, or `probe`). Its data, plots, settings and summaries
+are at that directory's root; `snapi/` contains vendor files/logs, and
+`logs/console.log` contains terminal output, including startup failures.
+There is no shared logs directory for new runs. Acquisition types are alternative
+commands, not substeps of one run. Replotting writes into the selected run folder.
 
-- `output/runs/PROFILE-TIMESTAMP/`: recordings, plots, settings, summaries,
-  and that run's `snapi/` data/log directory.
-- `output/latest-*.txt`: pointers to successful runs.
-- `output/logs/`: automatic terminal logs from `run-python`, plus older logs.
-- `output/legacy-snapi/`: historical shared snAPI outputs moved from `data/`.
-- `output/snapi/`: probe data and logs.
+`output/latest-*.txt` points to successful acquisition runs. `output_dir` in JSON
+selects the root, including launcher logs. The launcher allocates the run folder
+before starting the emulated interpreter and passes it as `LIDAR_RUN_DIR`.
+Historical folders have been moved to the new layout; terminal logs with a unique
+recorded run path are attached to that run. Older shared files that cannot be
+reliably assigned are preserved in `output/legacy/`.
 
-`output_dir` in JSON selects the capture output root, relative to the JSON file;
-launcher terminal logs and probe files always use the repository's `output/`.
 Historical run settings are preserved unchanged when directories are moved.
 Runtime dependencies remain separate from measurement outputs.
