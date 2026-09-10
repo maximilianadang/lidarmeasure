@@ -12,53 +12,43 @@ from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np
 from snAPI.Main import snAPI
-from snAPI.Constants import MeasMode
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from capture_config import load_settings, snapshot_settings, configure, check_rates, check_histogram
+config, profile = load_settings("vendor-demo")
 
 base = Path(__file__).resolve().parents[1]
 runtime = Path(os.environ["LIDAR_RUNTIME_DIR"])
 out = base / "measurements" / ("vendor-demo-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
 out.mkdir(parents=True)
 settings = out / "system.ini"
-settings.write_text((base / "system.ini").read_text())
+snapshot_settings(config, out)
 sn = snAPI(str(settings))
 started = False
 try:
-    if not sn.getDevice("1052684") or not sn.initDevice(MeasMode.T2):
-        raise RuntimeError("Device initialization failed")
-    if not sn.device.setSyncChannelEnable(1):
-        raise RuntimeError("Could not enable SYNC")
-    for ok in (sn.device.setSyncDiv(1), sn.device.setSyncEdgeTrig(-170, 1),
-               sn.device.setInputEdgeTrig(0, -170, 1)):
-        if not ok:
-            raise RuntimeError("Input configuration failed")
+    configure(sn, config, profile, out)
     time.sleep(0.3)
     rates = sn.getCountRates().tolist()
-    if not 9_000_000 < rates[0] < 11_000_000:
-        raise RuntimeError(f"Expected approximately 10 MHz SYNC; got {rates}")
+    check_rates(config, rates)
 
-    # Same histogram setup and acquisition as PicoQuant's simple demo.
-    sn.histogram.setRefChannel(0)
-    sn.histogram.setBinWidth(100)
-    if not sn.histogram.setNumBins(1000):
-        raise RuntimeError("Histogram configuration failed")
-    if not sn.setPTUFilePath(str(out / "measurement.ptu")):
-        raise RuntimeError("PTU path rejected")
     started = True
-    if not sn.histogram.measure(acqTime=1000, waitFinished=True, savePTU=True):
+    if not sn.histogram.measure(acqTime=profile["duration_ms"], waitFinished=True, savePTU=profile["save_ptu"]):
         raise RuntimeError("Measurement failed")
     data, bins = sn.histogram.getData()
     data, bins = np.array(data, copy=True), np.array(bins, copy=True)
 
+    check_histogram(profile, data, bins)
+    export_bins = profile["export_bins"]
     lib = ct.CDLL(str(runtime / "package/snapi-1.1.2/snAPI/libmhlib.so"))
     flags = ct.c_int()
     if lib.MH_GetFlags(ct.c_int(0), ct.byref(flags)) < 0 or flags.value & 0x12:
         raise RuntimeError(f"Data-integrity error: flags={flags.value}")
     np.savez(out / "histogram.npz", counts=data, time_ps=bins)
-    np.savetxt(out / "histogram.csv", np.column_stack((bins / 1000, data.T)),
+    np.savetxt(out / "histogram.csv", np.column_stack((bins[:export_bins] / 1000, data[:, :export_bins].T)),
                delimiter=",", header="time_ns,sync,CH1,CH2,CH3,CH4", comments="",
                fmt=["%.4f"] + ["%d"] * data.shape[0])
     peak = int(np.argmax(data[1]))
-    summary = dict(mode="T2", duration_ms=1000, bin_width_ps=100, num_bins=1000,
+    summary = dict(mode="T2", duration_ms=profile["duration_ms"], bin_width_ps=float(bins[1]-bins[0]), num_bins=len(bins), requested_profile=profile,
                    rates_Hz=rates, channel_counts=data.sum(axis=1).tolist(),
                    peak_time_ns=float(bins[peak] / 1000), peak_counts=int(data[1, peak]),
                    flags=flags.value, configuration=sn.deviceConfig)

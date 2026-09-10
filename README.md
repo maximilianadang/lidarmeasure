@@ -41,13 +41,38 @@ initializes T3 mode, applies the settings above, checks for approximately 10 MHz
 SYNC, acquires for one second, checks hardware flags, and saves:
 
 - `histogram.npz`: all channels and all native bins.
-- `histogram-80ns.csv`: the first 1000 bins at 80 ps (80 ns span).
+- `histogram.csv`: the first 1000 bins at 80 ps (80 ns span).
 - `summary.json`: count rates, peak timing, configuration, and hardware flags.
 
 Each capture gets a timestamped directory under `measurements/`.
 `latest-measurement.txt` points to the latest successful capture.
 Scripts apply settings when run and should not be imported as libraries.
 Do not run multiple acquisition clients against the same device concurrently.
+
+## Configuration
+
+Both acquisition scripts load `lidar-settings.json` through `capture_config.py`.
+Edit the files below to change subsequent captures:
+
+- `system.ini`: snAPI data/log paths and buffer size.
+- `device.ini`: native snAPI device settings, loaded with `loadIniConfig()` after
+  device initialization. Physical CH1 is `[Channel_0]`; edge `1` means rising.
+- `lidar-settings.json`: device serial, paths to those INIs, expected SYNC rate
+  and tolerance, and named `capture` (T3) / `vendor-demo` (T2) profiles.
+  Profiles control duration, PTU recording, binning, and CSV export length.
+
+For a separate setup use `--settings /absolute/path/to/lidar-settings.json` with
+either script. INI paths resolve relative to that JSON file. The launcher runs
+from the repository root, so `Data = ./data` in system.ini is relative to that root.
+The expected SYNC rate is a validation check; it does not set the laser rate.
+
+T3 uses the configured device binning code (0 = base resolution); its
+`expected_bin_width_ps` checks the returned width, and its full native histogram
+length is retained. T2 explicitly sets `bin_width_ps` and `num_bins` through the
+histogram API. `export_bins` controls the CSV subset in either mode. Full arrays
+always go to NPZ. Each capture directory includes copies of both INIs and the
+JSON settings; `summary.json` includes the requested profile and reported
+device configuration. Histogram dimensions and bin width are checked before export.
 
 ## Start with the official example
 

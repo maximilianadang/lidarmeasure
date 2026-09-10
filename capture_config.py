@@ -1,0 +1,79 @@
+"""Shared capture configuration; importing this module does not open hardware."""
+import argparse
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+
+
+def load_settings(profile_name):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--settings", type=Path, default=ROOT / "lidar-settings.json")
+    args = parser.parse_args()
+    path = args.settings.resolve()
+    settings = json.loads(path.read_text())
+    profile = settings["profiles"][profile_name]
+    expected_mode = {"capture": "T3", "vendor-demo": "T2"}[profile_name]
+    if profile["mode"] != expected_mode:
+        raise ValueError(f"{profile_name} requires mode {expected_mode}")
+    keys = ["duration_ms", "export_bins"]
+    keys += ["bin_width_ps", "num_bins"] if expected_mode == "T2" else ["expected_bin_width_ps"]
+    for key in keys:
+        if type(profile[key]) is not int or profile[key] <= 0:
+            raise ValueError(f"{key} must be a positive integer")
+    if expected_mode == "T2" and profile["export_bins"] > profile["num_bins"]:
+        raise ValueError("export_bins exceeds num_bins")
+    if expected_mode == "T3" and (type(profile["binning_code"]) is not int or not 0 <= profile["binning_code"] <= 24):
+        raise ValueError("Invalid binning_code")
+    if type(profile["save_ptu"]) is not bool:
+        raise ValueError("save_ptu must be a JSON boolean")
+    expected = settings["expected_sync_rate_hz"]
+    tolerance = settings["sync_rate_tolerance_hz"]
+    if not 0 < tolerance < expected:
+        raise ValueError("SYNC tolerance must be positive and below expected rate")
+    settings["device_serial"] = str(settings["device_serial"])
+    for key in ("system_ini", "device_ini"):
+        settings[key] = str((path.parent / settings[key]).resolve())
+        if not Path(settings[key]).is_file():
+            raise FileNotFoundError(settings[key])
+    return settings, profile
+
+
+def snapshot_settings(settings, out):
+    """Freeze the exact inputs before opening the device; load these copies."""
+    snapshot = dict(settings, system_ini="system.ini", device_ini="device.ini")
+    (out / "lidar-settings.json").write_text(json.dumps(snapshot, indent=2) + "\n")
+    for key in ("system_ini", "device_ini"):
+        (out / (key.replace("_", "."))).write_text(Path(settings[key]).read_text())
+
+
+def configure(sn, settings, profile, out):
+    from snAPI.Constants import MeasMode
+    if not sn.getDevice(settings["device_serial"]) or not sn.initDevice(MeasMode[profile["mode"]]):
+        raise RuntimeError("Device initialization failed")
+    if not sn.loadIniConfig(str(out / "device.ini")):
+        raise RuntimeError("Device configuration rejected")
+    if profile["mode"] == "T2":
+        sn.histogram.setRefChannel(0)  # Dedicated SYNC
+        sn.histogram.setBinWidth(profile["bin_width_ps"])
+        if not sn.histogram.setNumBins(profile["num_bins"]):
+            raise RuntimeError("Histogram configuration rejected")
+    elif not sn.device.setBinning(profile["binning_code"]):
+        raise RuntimeError("T3 binning rejected")
+    if profile["save_ptu"] and not sn.setPTUFilePath(str(out / "measurement.ptu")):
+        raise RuntimeError("PTU path rejected")
+
+
+def check_rates(settings, rates):
+    if abs(rates[0] - settings["expected_sync_rate_hz"]) > settings["sync_rate_tolerance_hz"]:
+        raise RuntimeError(f"SYNC rate outside configured tolerance: {rates}")
+
+
+def check_histogram(profile, data, bins):
+    width = profile.get("expected_bin_width_ps", profile.get("bin_width_ps"))
+    if len(bins) < 2 or abs(float(bins[1] - bins[0]) - width) > 1e-6:
+        raise RuntimeError(f"Histogram bin width differs from requested {width} ps")
+    if profile["export_bins"] > len(bins):
+        raise RuntimeError("export_bins exceeds returned histogram length")
+    if profile["mode"] == "T2" and len(bins) != profile["num_bins"]:
+        raise RuntimeError("Returned histogram length differs from configuration")
