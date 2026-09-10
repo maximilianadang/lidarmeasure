@@ -43,9 +43,13 @@ SYNC, acquires for one second, checks hardware flags, and saves:
 - `histogram.npz`: all channels and all native bins.
 - `histogram.csv`: the first 1000 bins at 80 ps (80 ns span).
 - `summary.json`: count rates, peak timing, configuration, and hardware flags.
+- `histogram.png`: raw photon counts versus measured delay.
+- `range-counts-over-r4.png` and `.csv`: range versus raw counts divided by range⁴.
+- `range-plot-calibration.json`: the range formula and calibration assumptions.
 
 Each capture gets a timestamped directory under `measurements/`.
-`latest-measurement.txt` points to the latest successful capture.
+`latest-measurement.txt` points to the latest capture with successful plotting.
+If plotting fails, the command fails but the raw capture remains on disk.
 Scripts apply settings when run and should not be imported as libraries.
 Do not run multiple acquisition clients against the same device concurrently.
 
@@ -73,6 +77,43 @@ histogram API. `export_bins` controls the CSV subset in either mode. Full arrays
 always go to NPZ. Each capture directory includes copies of both INIs and the
 JSON settings; `summary.json` includes the requested profile and reported
 device configuration. Histogram dimensions and bin width are checked before export.
+
+## One-command capture and plotting
+
+```bash
+./run-python capture-returns.py
+# Or choose a complete settings bundle:
+./run-python capture-returns.py --settings /absolute/path/to/lidar-settings.json
+```
+
+The `plot` section in `lidar-settings.json` controls the plotted detector channel,
+delay window, and fixed reference calibration. The current reference is the
+user's approximate 18.3 m target and the 58.40 ns peak from capture
+`20260910T015320Z`. We use `R = R_ref + c*(t-t_ref)/2`, with delays converted to
+seconds. New captures do **not** re-anchor their peaks. Change the calibration
+only when calibrating against another known target or after timing setup changes.
+The 10 MHz pulse rate leaves a roughly 15 m range ambiguity; this reference
+selects a range branch and is not an independent validation of absolute distance.
+
+The requested y-axis is **raw counts / R⁴**, with no background subtraction.
+This emphasizes nearer returns; it is not compensation for inverse-fourth-power
+loss (which would multiply by R⁴). Nonpositive ranges are excluded. Full raw
+histograms remain in NPZ regardless of plotting and CSV windows.
+
+Acquisition runs under QEMU; after releasing the device, it automatically invokes
+`plot_histogram.py` using native `/usr/bin/python3 -I`. The isolated interpreter
+avoids the host's user-installed NumPy conflicting with system Matplotlib.
+Native Python must have NumPy and Matplotlib installed (on Ubuntu, packages
+`python3-numpy` and `python3-matplotlib`). No GUI is needed.
+To regenerate plots from a saved capture and its saved settings, without hardware:
+
+```bash
+/usr/bin/python3 -I plot_histogram.py /absolute/path/to/measurement-directory
+```
+
+Run the range conversion tests with `python3 -s -m unittest discover -s tests`.
+The separate vendor T2 tutorial remains an acquisition example; the main T3
+capture command provides the complete capture-and-plot workflow.
 
 ## Start with the official example
 

@@ -21,5 +21,16 @@
       "num_bins": 1000,
       "export_bins": 1000
     }
+  },
+  "plot": {
+    "channel": 1,
+    "reference_distance_m": 18.3,
+    "reference_delay_ns": 58.4,
+    "reference_capture": "20260910T015320Z",
+    "delay_window_ns": [
+      0,
+      100
+    ],
+    "y_transform": "counts_divided_by_range_fourth_power"
   }
 }

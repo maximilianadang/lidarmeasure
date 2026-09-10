@@ -1,6 +1,7 @@
 """Shared capture configuration; importing this module does not open hardware."""
 import argparse
 import json
+import math
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -36,6 +37,19 @@ def load_settings(profile_name):
         settings[key] = str((path.parent / settings[key]).resolve())
         if not Path(settings[key]).is_file():
             raise FileNotFoundError(settings[key])
+    plot = settings["plot"]
+    for key in ("reference_distance_m", "reference_delay_ns"):
+        if type(plot[key]) not in (int, float) or not math.isfinite(plot[key]):
+            raise ValueError(f"Invalid plot {key}")
+    if plot["reference_distance_m"] <= 0:
+        raise ValueError("Reference distance must be positive")
+    if type(plot["channel"]) is not int or not 1 <= plot["channel"] <= 4:
+        raise ValueError("Plot channel must be CH1 through CH4")
+    window = plot["delay_window_ns"]
+    if len(window) != 2 or not all(type(x) in (int, float) and math.isfinite(x) for x in window) or not 0 <= window[0] < window[1]:
+        raise ValueError("Invalid delay_window_ns")
+    if plot["y_transform"] != "counts_divided_by_range_fourth_power":
+        raise ValueError("Unsupported plot y_transform")
     return settings, profile
 
 
