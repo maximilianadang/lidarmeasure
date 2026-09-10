@@ -87,6 +87,12 @@ def plot_capture(directory, start_s=0, end_s=None):
     fig.colorbar(mesh, ax=ax, label='Photon counts / R⁴ per time/range bin (counts m⁻⁴; log color)' if norm else 'Photon counts / R⁴')
     ax.set(xlabel='Elapsed acquisition time (s)', ylabel='Range (m), fixed reference calibration',
            title=f'CH{config["channel"]} continuous lidar waterfall\n{time_edges[-1]-time_edges[0]:g} s displayed; {effective_window:g} ms windows')
+    lower = config.get('range_axis_min_m', 0)
+    upper = config.get('range_axis_max_m') or float(range_edges[-1])
+    ax.set_ylim(lower, upper)
+    if lower < range_edges[0]:
+        ax.axhspan(lower, range_edges[0], color='0.92', hatch='//', label='Outside selected range branch')
+        ax.legend(loc='upper right')
     fig.savefig(directory / 'waterfall.png', dpi=180)
     plt.close(fig)
     metadata = dict(effective_window_ms=effective_window, requested_window_ms=profile['window_ms'], reference_calibration=config, windows=len(time_edges)-1,

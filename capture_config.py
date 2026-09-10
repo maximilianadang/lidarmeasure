@@ -56,6 +56,11 @@ def load_settings(profile_name, argv=None):
         raise ValueError("Invalid delay_window_ns")
     if plot["y_transform"] != "counts_divided_by_range_fourth_power":
         raise ValueError("Unsupported plot y_transform")
+    lower, upper = plot.get("range_axis_min_m", 0), plot.get("range_axis_max_m")
+    if type(lower) not in (int, float) or not math.isfinite(lower) or lower < 0:
+        raise ValueError("range_axis_min_m must be finite and nonnegative")
+    if upper is not None and (type(upper) not in (int, float) or not math.isfinite(upper) or upper <= lower):
+        raise ValueError("range_axis_max_m must exceed range_axis_min_m or be null")
     settings["settings_source"] = str(path)
     return settings, profile
 

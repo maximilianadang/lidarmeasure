@@ -43,6 +43,8 @@
       0,
       100
     ],
-    "y_transform": "counts_divided_by_range_fourth_power"
+    "y_transform": "counts_divided_by_range_fourth_power",
+    "range_axis_min_m": 0,
+    "range_axis_max_m": null
   }
 }

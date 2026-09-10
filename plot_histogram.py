@@ -40,7 +40,16 @@ def plot_capture(directory):
         ax.set(xlabel=xlabel, ylabel=ylabel,
                title=f'CH{config["channel"]} lidar histogram — {summary["duration_ms"] / 1000:g} s acquisition\n'
                      f'{summary["bin_width_ps"]:g} ps bins; reference {config["reference_distance_m"]:g} m at {config["reference_delay_ns"]:g} ns')
-        ax.set_xlim(x[0], x[-1]); ax.set_ylim(bottom=0); ax.grid(alpha=.2)
+        ax.set_xlim(x[0], x[-1])
+        if name == 'range-counts-over-r4.png':
+            lower = config.get('range_axis_min_m', 0)
+            upper = config.get('range_axis_max_m') or float(x[-1])
+            ax.set_xlim(lower, upper)
+            if lower < x[0]:
+                ax.axvspan(lower, x[0], color='0.92', hatch='//', label='Outside selected range branch')
+                ax.legend()
+        ax.set_ylim(bottom=0)
+        ax.grid(alpha=.2)
         fig.savefig(directory / name, dpi=180)
         plt.close(fig)
     print('PLOTS', directory, flush=True)

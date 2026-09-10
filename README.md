@@ -163,3 +163,10 @@ See [the vendor tutorial](docs/tutorial.md), [third-party notices](THIRD_PARTY_N
 and [ARM64 setup](docs/arm64-setup.md) for provenance and setup details.
 On a new host, persistent USB access can be configured with
 `sudo ./scripts/install-usb-access.sh "$USER" 1052684`.
+
+Range axes start at zero by default. `plot.range_axis_min_m` and
+`plot.range_axis_max_m` (null = data upper bound) control display limits only.
+With the current reference, the 0–100 ns delay window maps to about 9.55–24.54 m.
+The region below that interval is shaded as outside the selected range branch,
+not filled with zero counts. Extending axes does not resolve pulse ambiguity or
+create additional measured coverage.
