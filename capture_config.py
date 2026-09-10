@@ -35,6 +35,12 @@ def load_settings(profile_name, argv=None):
         reserve = profile["min_free_disk_gb"]
         if type(reserve) not in (float, int) or not math.isfinite(reserve) or reserve <= 0:
             raise ValueError("min_free_disk_gb must be finite and positive")
+    if expected_mode == "T3" and "num_bins" in profile:
+        bins = profile["num_bins"]
+        if type(bins) is not int or bins < 1024 or bins > 32768 or bins & (bins - 1):
+            raise ValueError("T3 num_bins must be a power of two from 1024 to 32768")
+        if profile.get("export_bins", bins) > bins:
+            raise ValueError("export_bins exceeds num_bins")
     expected = settings["expected_sync_rate_hz"]
     tolerance = settings["sync_rate_tolerance_hz"]
     if not 0 < tolerance < expected:
@@ -97,6 +103,10 @@ def configure(sn, settings, profile, out):
             raise RuntimeError("Histogram configuration rejected")
     elif not sn.device.setBinning(profile["binning_code"]):
         raise RuntimeError("T3 binning rejected")
+    if profile["mode"] == "T3" and "num_bins" in profile:
+        length_code = profile["num_bins"].bit_length() - 11
+        if not sn.device.setHistoLength(length_code):
+            raise RuntimeError("T3 histogram length rejected")
     if profile["save_ptu"] and not sn.setPTUFilePath(str(out / "measurement.ptu")):
         raise RuntimeError("PTU path rejected")
 
@@ -112,5 +122,5 @@ def check_histogram(profile, data, bins):
         raise RuntimeError(f"Histogram bin width differs from requested {width} ps")
     if profile["export_bins"] > len(bins):
         raise RuntimeError("export_bins exceeds returned histogram length")
-    if profile["mode"] == "T2" and len(bins) != profile["num_bins"]:
+    if "num_bins" in profile and len(bins) != profile["num_bins"]:
         raise RuntimeError("Returned histogram length differs from configuration")

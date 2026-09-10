@@ -205,3 +205,13 @@ reliably assigned are preserved in `output/legacy/`.
 
 Historical run settings are preserved unchanged when directories are moved.
 Runtime dependencies remain separate from measurement outputs.
+
+## Current experiment binning
+
+All three acquisition profiles now request 8192 bins at 80 ps, with 1 MHz expected
+SYNC. T3 uses binning code 0 and histogram length code 3; T2 configures 80 ps and
+8192 bins directly. The CSV and waterfall delay window cover 0–655.36 ns (last
+bin coordinate 655.28 ns). This is about 98.24 m of delay-equivalent range span,
+less than the approximately 149.90 m pulse-period ambiguity interval at 1 MHz.
+The prior reference calibration remains unverified at the new repetition rate.
+These current settings supersede the full-period export example above.
