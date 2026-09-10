@@ -6,34 +6,32 @@
   "sync_rate_tolerance_hz": 100000,
   "profiles": {
     "capture": {
-      "mode": "T3",
+      "mode": "T2",
       "duration_ms": 1000,
       "save_ptu": false,
-      "binning_code": 1,
-      "expected_bin_width_ps": 160,
-      "export_bins": 8192,
-      "num_bins": 8192
+      "export_bins": 1200,
+      "num_bins": 1200,
+      "bin_width_ps": 800
     },
     "vendor-demo": {
       "mode": "T2",
       "duration_ms": 1000,
       "save_ptu": true,
-      "bin_width_ps": 160,
-      "num_bins": 8192,
-      "export_bins": 8192
+      "bin_width_ps": 800,
+      "num_bins": 1200,
+      "export_bins": 1200
     },
     "waterfall": {
-      "mode": "T3",
+      "mode": "T2",
       "duration_ms": 28800000,
       "window_ms": 100,
       "max_records": 2000000,
       "save_ptu": false,
-      "binning_code": 1,
-      "expected_bin_width_ps": 160,
-      "poll_ms": 1000,
+      "poll_ms": 100,
       "min_free_disk_gb": 10,
       "preview_max_columns": 2000,
-      "num_bins": 8192
+      "num_bins": 1200,
+      "bin_width_ps": 800
     }
   },
   "plot": {
@@ -43,12 +41,16 @@
     "reference_capture": null,
     "delay_window_ns": [
       0,
-      1000
+      960
     ],
     "y_transform": "counts_divided_by_range_fourth_power",
     "range_axis_min_m": 0,
     "range_axis_max_m": null,
     "reference_description": "Baffle edge defines zero range; approximately 38 ns delay reported by user"
   },
-  "output_dir": "output"
+  "output_dir": "output",
+  "experiment": {
+    "laser_pulse_width_ns": 3.5,
+    "laser_pulse_width_source": "user setting; not controlled by snAPI"
+  }
 }

@@ -17,23 +17,45 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
+class T2Delays:
+    """Associate detector events with their preceding SYNC across block boundaries."""
+    def __init__(self):
+        self.last_sync = None
+        self.unreferenced = 0
+
+    def decode(self, times, channels):
+        sync = times[channels == 0]
+        if self.last_sync is not None:
+            sync = np.concatenate((np.array([self.last_sync], dtype=times.dtype), sync))
+        selected = (channels >= 1) & (channels <= 4)
+        photons, photon_channels = times[selected], channels[selected]
+        index = np.searchsorted(sync, photons, side='right') - 1
+        valid = index >= 0
+        self.unreferenced += int((~valid).sum())
+        if len(sync):
+            self.last_sync = sync[-1]
+        return photons[valid].astype(np.float64) * 1e-12, (photons[valid] - sync[index[valid]]).astype(np.float64), photon_channels[valid]
+
+
 def stream_events(sn, measurement, settings, profile, out, rates, check_health=None):
-    resolution = float(sn.deviceConfig['Resolution'])
-    if resolution != profile['expected_bin_width_ps']:
+    t2 = profile.get('mode', 'T3') == 'T2'
+    resolution = float(profile['bin_width_ps']) if t2 else float(sn.deviceConfig['Resolution'])
+    decoder = T2Delays() if t2 else None
+    if not t2 and resolution != profile['expected_bin_width_ps']:
         raise RuntimeError(f'Unexpected resolution: {resolution} ps')
     capacity = profile['max_records']
     interval = profile['poll_ms'] / 1000
-    if sum(rates[1:]) * interval * 2 >= capacity:
+    if sum(rates if t2 else rates[1:]) * interval * 2 >= capacity:
         raise RuntimeError('Insufficient block capacity for the measured rate and poll interval')
     reserve = profile['min_free_disk_gb'] * 1e9
     if shutil.disk_usage(out).free < reserve:
         raise RuntimeError('Free disk space is below min_free_disk_gb')
     blocks = out / 'blocks'
     blocks.mkdir()
-    progress = dict(format_version=1, status='acquiring', blocks=0, records=0,
+    progress = dict(format_version=1, status='acquiring', blocks=0, records=0, input_records=0, unreferenced_events=0,
                     channel_counts=[0] * 5, elapsed_s=0.0, bin_width_ps=resolution,
                     sync_rate_for_timestamps_hz=float(rates[0]),
-                    sync_rate_source='pre-capture SYNC rate (fixed throughout run)',
+                    sync_rate_source='T2 absolute picosecond timestamps' if t2 else 'pre-capture SYNC rate (fixed throughout run)',
                     max_block_records=0, max_read_interval_s=0.0)
     atomic_json(out / 'stream-progress.json', progress)
     stopping = False
@@ -60,8 +82,14 @@ def stream_events(sn, measurement, settings, profile, out, rates, check_health=N
             if len(packed) >= capacity:
                 raise RuntimeError('Block reached capacity; possible lost events')
             if len(packed):
-                delay = measurement.dTime_T3(packed).astype(np.float64) * resolution
-                elapsed = measurement.nSync_T3(packed).astype(np.float64) / rates[0] + delay * 1e-12
+                progress['input_records'] += len(packed)
+                progress['max_block_records'] = max(progress['max_block_records'], len(packed))
+                if t2:
+                    elapsed, delay, channels = decoder.decode(packed, channels)
+                    progress['unreferenced_events'] = decoder.unreferenced
+                else:
+                    delay = measurement.dTime_T3(packed).astype(np.float64) * resolution
+                    elapsed = measurement.nSync_T3(packed).astype(np.float64) / rates[0] + delay * 1e-12
                 path = blocks / f'{progress["blocks"]:08d}.npz'
                 temporary = path.with_suffix('.tmp')
                 with temporary.open('wb') as handle:
@@ -70,9 +98,9 @@ def stream_events(sn, measurement, settings, profile, out, rates, check_health=N
                     os.fsync(handle.fileno())
                 temporary.replace(path)
                 progress['blocks'] += 1
-                progress['records'] += len(packed)
+                progress['records'] += len(channels)
                 progress['max_block_records'] = max(progress['max_block_records'], len(packed))
-                progress['elapsed_s'] = max(progress['elapsed_s'], float(elapsed.max()))
+                progress['elapsed_s'] = max(progress['elapsed_s'], float(elapsed.max()) if len(elapsed) else 0)
                 counts = np.bincount(channels, minlength=5)
                 for i in range(5):
                     progress['channel_counts'][i] += int(counts[i])

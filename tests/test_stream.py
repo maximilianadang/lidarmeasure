@@ -53,3 +53,23 @@ class StreamingTests(unittest.TestCase):
             self.assertTrue(result['stop_requested'])
             m.stopMeasure.assert_called_once()
             self.assertEqual(result['records'],3)
+
+class T2DecoderTests(unittest.TestCase):
+    def test_sync_reference_survives_block_boundaries(self):
+        from stream_capture import T2Delays
+        d=T2Delays()
+        elapsed,delay,ch=d.decode(np.array([90,100,120],dtype=np.uint64),np.array([1,0,1]))
+        np.testing.assert_array_equal(delay,[20])
+        self.assertEqual(d.unreferenced,1)
+        elapsed,delay,ch=d.decode(np.array([150,200,230],dtype=np.uint64),np.array([1,0,2]))
+        np.testing.assert_array_equal(delay,[50,30])
+        np.testing.assert_allclose(elapsed,[150e-12,230e-12])
+        np.testing.assert_array_equal(ch,[1,2])
+
+    def test_empty_and_sync_only_blocks(self):
+        from stream_capture import T2Delays
+        d=T2Delays()
+        t=np.array([],dtype=np.uint64)
+        self.assertEqual(len(d.decode(t,t)[0]),0)
+        self.assertEqual(len(d.decode(np.array([100],dtype=np.uint64),np.array([0]))[0]),0)
+        np.testing.assert_array_equal(d.decode(np.array([110],dtype=np.uint64),np.array([1]))[1],[10])

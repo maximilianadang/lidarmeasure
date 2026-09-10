@@ -15,15 +15,15 @@ def load_settings(profile_name, argv=None):
     path = args.settings.resolve()
     settings = json.loads(path.read_text())
     profile = settings["profiles"][profile_name]
-    expected_mode = {"capture": "T3", "vendor-demo": "T2", "waterfall": "T3"}[profile_name]
-    if profile["mode"] != expected_mode:
-        raise ValueError(f"{profile_name} requires mode {expected_mode}")
+    expected_mode = profile['mode']
+    if expected_mode not in ('T2', 'T3'):
+        raise ValueError('mode must be T2 or T3')
     keys = ["duration_ms"] + (["window_ms", "max_records", "poll_ms", "preview_max_columns"] if profile_name == "waterfall" else ["export_bins"])
     keys += ["bin_width_ps", "num_bins"] if expected_mode == "T2" else ["expected_bin_width_ps"]
     for key in keys:
         if type(profile[key]) is not int or profile[key] <= 0:
             raise ValueError(f"{key} must be a positive integer")
-    if expected_mode == "T2" and profile["export_bins"] > profile["num_bins"]:
+    if expected_mode == "T2" and profile.get("export_bins", profile["num_bins"]) > profile["num_bins"]:
         raise ValueError("export_bins exceeds num_bins")
     if expected_mode == "T3" and (type(profile["binning_code"]) is not int or not 0 <= profile["binning_code"] <= 24):
         raise ValueError("Invalid binning_code")

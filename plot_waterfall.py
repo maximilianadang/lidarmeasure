@@ -18,7 +18,7 @@ def histogram_windows(elapsed_s, delay_ps, channels, profile, config):
     # Include a shortened last window explicitly; never reset the acquisition clock.
     time_edges = np.arange((profile["duration_ms"] + profile["window_ms"] - 1) // profile["window_ms"] + 1, dtype=np.int64) * profile["window_ms"] / 1000
     time_edges[-1] = duration
-    width = profile['expected_bin_width_ps']
+    width = profile.get('bin_width_ps', profile.get('expected_bin_width_ps'))
     lo, hi = config['delay_window_ns']
     delay_edges = np.arange(np.ceil(lo * 1000 / width), np.ceil(hi * 1000 / width) + 1) * width
     mask = (channels == config['channel']) & (elapsed_s >= 0) & (elapsed_s < duration) & (delay_ps >= delay_edges[0]) & (delay_ps < delay_edges[-1])

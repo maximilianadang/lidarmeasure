@@ -229,3 +229,25 @@ Current bin-width update: all profiles use 160 ps (T3 binning code 1), retaining
 remains one pulse period, 0–1000 ns, because a longer histogram does not extend the
 unambiguous range. Range-bin spacing is approximately 24 mm. The 38 ns baffle
 reference is retained; changing binning does not automatically recalibrate it.
+
+## Current T2 setup
+
+All profiles now use **T2**, 800 ps histogram bins, and 1200 bins (960 ns window),
+with expected SYNC at 1 MHz. The user's 3.5 ns optical pulse width is recorded in
+`experiment`; the software does not control it. This supersedes earlier T3 and
+160 ps configuration examples in this document.
+
+Static capture and the vendor example set `sn.histogram.setBinWidth(800)` and
+`setNumBins(1200)` directly. Continuous capture reads unfolded T2 timestamps,
+associates each detector event with its preceding SYNC (including across block
+boundaries), and saves detector timestamps and measured delays. SYNC-only events
+are processed but not duplicated on disk. `input_records` in stream progress
+includes SYNC, while `records` and channel counts describe saved detector events.
+Events before the first observed SYNC are counted as `unreferenced_events` and
+excluded. Enable PTU if the complete original stream is needed.
+
+The block poll interval is 100 ms to accommodate the additional 1 million SYNC
+events/second. Waterfall analysis builds the same 800 ps bins from the saved
+per-event delays; the static histogram is built by snAPI. T2's increased USB and
+processing load requires sustained hardware validation on our emulated runtime.
+The pulse-period ambiguity and baffle calibration are unchanged by switching modes.
