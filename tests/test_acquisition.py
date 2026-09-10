@@ -35,7 +35,7 @@ class LifecycleTests(unittest.TestCase):
             sn = Mock(deviceConfig={})
             sn.getCountRates.return_value.tolist.return_value = [10000000]
             def snapshot(settings, out):
-                for name in ('lidar-settings.json', 'device.ini', 'system.ini'):
+                for name in ('lidar-settings.json', 'device.ini', 'system.ini', 'system-source.ini'):
                     (out/name).write_text('{}')
             from contextlib import contextmanager
             @contextmanager
@@ -47,10 +47,10 @@ class LifecycleTests(unittest.TestCase):
             with patch('acquisition.ROOT', root), patch('acquisition.load_settings', return_value=(settings, profile)), patch('acquisition.snapshot_settings', snapshot), patch('acquisition.device_session', session), patch('acquisition.histogram', capture), patch('acquisition.check_rates'), patch('acquisition.check_acquisition', return_value={}), patch('acquisition.generate_plots', side_effect=RuntimeError('plot failed')), patch.dict('os.environ', LIDAR_RUNTIME_DIR='/tmp'), patch('acquisition.time.sleep'):
                 with self.assertRaisesRegex(RuntimeError, 'plot failed'):
                     acquisition.run('capture')
-            out = next((root/'measurements').iterdir())
+            out = next((root/'output'/'runs').iterdir())
             self.assertEqual(json.loads((out/'summary.json').read_text())['status'], 'failed')
             self.assertTrue((out/'histogram.npz').exists())
-            self.assertFalse((root/'latest-measurement.txt').exists())
+            self.assertFalse((root/'output'/'latest-measurement.txt').exists())
 
     def test_invalid_duration_rejected_before_hardware(self):
         settings = json.loads((acquisition.ROOT/'lidar-settings.json').read_text())

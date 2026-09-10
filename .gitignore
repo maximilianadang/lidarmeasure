@@ -21,3 +21,5 @@ __pycache__/
 *.tar.bz2
 
 /latest-waterfall.txt
+
+/output/

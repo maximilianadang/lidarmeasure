@@ -1,5 +1,6 @@
 """Shared capture configuration; importing this module does not open hardware."""
 import argparse
+import configparser
 import json
 import math
 from pathlib import Path
@@ -61,6 +62,7 @@ def load_settings(profile_name, argv=None):
         raise ValueError("range_axis_min_m must be finite and nonnegative")
     if upper is not None and (type(upper) not in (int, float) or not math.isfinite(upper) or upper <= lower):
         raise ValueError("range_axis_max_m must exceed range_axis_min_m or be null")
+    settings["output_dir"] = str((path.parent / settings.get("output_dir", "output")).resolve())
     settings["settings_source"] = str(path)
     return settings, profile
 
@@ -69,8 +71,17 @@ def snapshot_settings(settings, out):
     """Freeze the exact inputs before opening the device; load these copies."""
     snapshot = dict(settings, system_ini="system.ini", device_ini="device.ini")
     (out / "lidar-settings.json").write_text(json.dumps(snapshot, indent=2) + "\n")
-    for key in ("system_ini", "device_ini"):
-        (out / (key.replace("_", "."))).write_text(Path(settings[key]).read_text())
+    (out / "device.ini").write_text(Path(settings["device_ini"]).read_text())
+    source = Path(settings["system_ini"]).read_text()
+    (out / "system-source.ini").write_text(source)
+    system = configparser.ConfigParser()
+    system.optionxform = str
+    system.read_string(source)
+    if not system.has_section("Paths"):
+        system.add_section("Paths")
+    system.set("Paths", "Data", str(out / "snapi"))
+    with (out / "system.ini").open("w") as handle:
+        system.write(handle)
 
 
 def configure(sn, settings, profile, out):

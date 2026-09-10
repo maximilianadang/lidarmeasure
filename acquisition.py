@@ -81,7 +81,8 @@ def histogram(sn, measurement, settings, profile, out, rates):
 
 def run(profile_name):
     settings, profile = load_settings(profile_name)
-    out = ROOT / 'measurements' / (profile_name + '-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
+    output = Path(settings.get('output_dir', ROOT / 'output'))
+    out = output / 'runs' / (profile_name + '-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
     out.mkdir(parents=True)
     snapshot_settings(settings, out)
     summary = dict(schema_version=1, profile_name=profile_name, status='acquiring',
@@ -91,7 +92,7 @@ def run(profile_name):
                    code_sha256={str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                                 for p in sorted(ROOT.glob('*.py'))},
                    configuration_sha256={name: hashlib.sha256((out / name).read_bytes()).hexdigest()
-                                         for name in ('lidar-settings.json', 'device.ini', 'system.ini')})
+                                         for name in ('lidar-settings.json', 'device.ini', 'system.ini', 'system-source.ini')})
     write_json(out / 'summary.json', summary)
     print(f'RUN {profile_name}: {profile["duration_ms"]} ms; settings {settings["settings_source"]}; output {out}', flush=True)
     try:
@@ -116,5 +117,5 @@ def run(profile_name):
         write_json(out / 'summary.json', summary)
     pointer = {'capture': 'latest-measurement.txt', 'waterfall': 'latest-waterfall.txt',
                'vendor-demo': 'latest-vendor-demo.txt'}[profile_name]
-    (ROOT / pointer).write_text(str(out))
+    (output / pointer).write_text(str(out))
     print('COMPLETE', out, flush=True)

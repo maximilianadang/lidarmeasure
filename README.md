@@ -38,18 +38,19 @@ Do not run multiple acquisition commands against the device concurrently.
 - `device_ini`: thresholds, edges, divider, channel enables and offsets; default `device.ini`.
 
 INI paths resolve relative to the JSON file. The launcher runs from the repository
-root, so `Data = ./data` is relative to that root. Expected SYNC rate is a check,
+root, each run writes an effective `system.ini` with its own absolute snAPI data path.
+The original system INI is preserved as `system-source.ini`. Expected SYNC rate is a check,
 not a command to set the laser frequency. Physical CH1 is `[Channel_0]` in the
 native device INI and row/channel **1** in output arrays; row 0 represents SYNC.
 
 The verified setup is serial `1052684`, laser timing connected to dedicated SYNC,
-MPD detector on CH1, 10 MHz SYNC, -170 mV rising edges, divider 1, trigger output off.
+MPD detector on CH1, previously 10 MHz SYNC, -170 mV rising edges, divider 1, trigger output off.
 Settings are validated before opening hardware. Device-specific limits are also
 checked by snAPI when the INI is applied.
 
 ## What each run saves
 
-Every run has a unique directory under `measurements/`. The command prints its
+Every run has a unique directory under `output/runs/`. The command prints its
 profile, settings source, duration and output directory.
 
 All runs save copies of the JSON and both INIs, and a common `summary.json` with:
@@ -170,3 +171,34 @@ With the current reference, the 0–100 ns delay window maps to about 9.55–24.
 The region below that interval is shaded as outside the selected range branch,
 not filled with zero counts. Extending axes does not resolve pulse ambiguity or
 create additional measured coverage.
+
+## Changing laser repetition rate and finding outputs
+
+The current configuration expects **1 MHz**, which requires setting the laser
+itself to 1 MHz. Software does not change the laser frequency. At 1 MHz:
+
+- `expected_sync_rate_hz = 1000000`, tolerance `100000` (10%).
+- `plot.delay_window_ns = [0, 1000]` covers a full pulse period.
+- T3 `export_bins = 12500` at 80 ps; T2 `num_bins = export_bins = 10000` at 100 ps.
+- SYNC divider remains 1; timing-bin spacing is unchanged.
+
+For 500 kHz (approximately 300 m unambiguous range), use expected rate 500000,
+tolerance 50000, delay window [0, 2000], T3 export_bins 25000, and T2
+num_bins/export_bins 20000. These settings validate acquisition and select bins;
+they do not by themselves recalibrate or implement modulo-range wrapping.
+The existing reference was measured at 10 MHz and must be verified/recalibrated
+before treating plots at the new repetition rate as calibrated physical ranges.
+
+All generated files now live in the repository's `output/` directory by default:
+
+- `output/runs/PROFILE-TIMESTAMP/`: recordings, plots, settings, summaries,
+  and that run's `snapi/` data/log directory.
+- `output/latest-*.txt`: pointers to successful runs.
+- `output/logs/`: automatic terminal logs from `run-python`, plus older logs.
+- `output/legacy-snapi/`: historical shared snAPI outputs moved from `data/`.
+- `output/snapi/`: probe data and logs.
+
+`output_dir` in JSON selects the capture output root, relative to the JSON file;
+launcher terminal logs and probe files always use the repository's `output/`.
+Historical run settings are preserved unchanged when directories are moved.
+Runtime dependencies remain separate from measurement outputs.

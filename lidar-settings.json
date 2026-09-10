@@ -2,8 +2,8 @@
   "device_serial": "1052684",
   "system_ini": "system.ini",
   "device_ini": "device.ini",
-  "expected_sync_rate_hz": 10000000,
-  "sync_rate_tolerance_hz": 1000000,
+  "expected_sync_rate_hz": 1000000,
+  "sync_rate_tolerance_hz": 100000,
   "profiles": {
     "capture": {
       "mode": "T3",
@@ -11,15 +11,15 @@
       "save_ptu": false,
       "binning_code": 0,
       "expected_bin_width_ps": 80,
-      "export_bins": 1000
+      "export_bins": 12500
     },
     "vendor-demo": {
       "mode": "T2",
       "duration_ms": 1000,
       "save_ptu": true,
       "bin_width_ps": 100,
-      "num_bins": 1000,
-      "export_bins": 1000
+      "num_bins": 10000,
+      "export_bins": 10000
     },
     "waterfall": {
       "mode": "T3",
@@ -41,10 +41,11 @@
     "reference_capture": "20260910T015320Z",
     "delay_window_ns": [
       0,
-      100
+      1000
     ],
     "y_transform": "counts_divided_by_range_fourth_power",
     "range_axis_min_m": 0,
     "range_axis_max_m": null
-  }
+  },
+  "output_dir": "output"
 }
