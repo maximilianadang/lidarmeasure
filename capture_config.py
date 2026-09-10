@@ -7,10 +7,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
-def load_settings(profile_name):
+def load_settings(profile_name, argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--settings", type=Path, default=ROOT / "lidar-settings.json")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     path = args.settings.resolve()
     settings = json.loads(path.read_text())
     profile = settings["profiles"][profile_name]
@@ -52,6 +52,7 @@ def load_settings(profile_name):
         raise ValueError("Invalid delay_window_ns")
     if plot["y_transform"] != "counts_divided_by_range_fourth_power":
         raise ValueError("Unsupported plot y_transform")
+    settings["settings_source"] = str(path)
     return settings, profile
 
 

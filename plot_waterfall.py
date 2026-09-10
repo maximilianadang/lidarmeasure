@@ -10,7 +10,7 @@ import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from matplotlib.colors import LogNorm
-from plot_histogram import C
+from range_transform import to_range, weight_counts
 
 
 def histogram_windows(elapsed_s, delay_ps, channels, profile, config):
@@ -20,10 +20,10 @@ def histogram_windows(elapsed_s, delay_ps, channels, profile, config):
     time_edges[-1] = duration
     width = profile['expected_bin_width_ps']
     lo, hi = config['delay_window_ns']
-    delay_edges = np.arange(np.floor(lo * 1000 / width), np.ceil(hi * 1000 / width) + 1) * width
+    delay_edges = np.arange(np.ceil(lo * 1000 / width), np.ceil(hi * 1000 / width) + 1) * width
     mask = (channels == config['channel']) & (elapsed_s >= 0) & (elapsed_s < duration) & (delay_ps >= delay_edges[0]) & (delay_ps < delay_edges[-1])
     counts, _, _ = np.histogram2d(elapsed_s[mask], delay_ps[mask], bins=(time_edges, delay_edges))
-    range_edges = config['reference_distance_m'] + (delay_edges / 1000 - config['reference_delay_ns']) * 1e-9 * C / 2
+    range_edges = to_range(delay_edges, config)
     # Match the static plot's bin-coordinate convention; exclude nonpositive bins.
     keep = range_edges[:-1] > 0
     if not keep.any():
@@ -31,7 +31,7 @@ def histogram_windows(elapsed_s, delay_ps, channels, profile, config):
     first = int(np.flatnonzero(keep)[0])
     ranges = range_edges[first:-1]
     counts = counts[:, first:].astype(np.uint64)
-    return time_edges, range_edges[first:], counts, counts / ranges[np.newaxis, :] ** 4
+    return time_edges, range_edges[first:], counts, weight_counts(counts, ranges)
 
 
 def plot_capture(directory):

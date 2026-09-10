@@ -3,24 +3,15 @@ import argparse
 import json
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 
-C = 299792458.0
-
-
-def range_data(time_ps, counts, config):
-    """Use a fixed calibration, never re-anchor the peak of a new capture."""
-    delay_ns = np.asarray(time_ps) / 1000
-    ranges = config['reference_distance_m'] + (delay_ns - config['reference_delay_ns']) * 1e-9 * C / 2
-    lo, hi = config['delay_window_ns']
-    mask = (delay_ns >= lo) & (delay_ns < hi) & (ranges > 0)
-    if not np.any(mask):
-        raise ValueError('No positive-range bins in the configured plotting window')
-    raw = np.asarray(counts)[mask]
-    return delay_ns[mask], ranges[mask], raw, raw / ranges[mask] ** 4
+from range_transform import C, range_data
 
 
 def plot_capture(directory):

@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from plot_histogram import range_data, C
+from range_transform import range_data, C
 
 
 class RangePlotTests(unittest.TestCase):
