@@ -31,7 +31,7 @@ Do not run multiple acquisition commands against the device concurrently.
 `lidar-settings.json` is the entry point for all three commands:
 
 - `profiles.capture`: T3, default 1000 ms; full histogram plus selected CSV bins.
-- `profiles.waterfall`: T3, default 10000 ms, with 100 ms waterfall windows.
+- `profiles.waterfall`: T3, default 28800000 ms (8 hours), with 100 ms waterfall windows.
 - `profiles.vendor-demo`: T2, default 1000 ms, 100 ps × 1000 bins, with PTU output.
 - `plot`: detector channel, delay window, fixed reference calibration, and counts/R⁴.
 - `system_ini`: snAPI paths, logging, and buffer settings; default `system.ini`.
@@ -63,9 +63,14 @@ All runs save copies of the JSON and both INIs, and a common `summary.json` with
 
 Static/T2 runs save `histogram.npz`, `histogram.csv`, `histogram.png`,
 `range-counts-over-r4.png`, its CSV, and `range-plot-calibration.json`.
-Waterfall runs save packed `events.npz`, `decoded-events.npz`, `waterfall.npz`
-(time × range counts, weighted counts and edges), `waterfall.png`, and
-`waterfall-summary.json`. `measurement.ptu` is saved when `save_ptu` is enabled.
+Waterfall runs save incrementally committed `blocks/00000000.npz` files containing
+elapsed timestamps, fine delays and channels, plus `stream-progress.json` with
+counters, elapsed time, and stream status. Block files are flushed and atomically
+renamed before the progress checkpoint advances. Incomplete `.tmp` files are not
+used. At completion, `waterfall.npz`, `waterfall.png`, and `waterfall-summary.json`
+contain a bounded overview. `measurement.ptu` is optional (`save_ptu`); it defaults
+to false for waterfall to avoid storing the same events twice. Static PTU settings
+are unchanged.
 
 The corresponding `latest-measurement.txt`, `latest-vendor-demo.txt`, or
 `latest-waterfall.txt` is updated only after acquisition and plotting succeed.
@@ -82,17 +87,54 @@ The 10 MHz repetition rate leaves about 15 m of range ambiguity; calibration sel
 one range branch and has not been independently validated at a second distance.
 80 ps bin spacing corresponds to about 12 mm of range, not guaranteed accuracy.
 
-The waterfall is one uninterrupted acquisition followed by plotting, not repeated
-static captures or a live display. Elapsed time comes from unfolded SYNC counters
-and fine delays using the measured SYNC rate. No first-photon time subtraction is
-performed. The color scale is shared across the image; zero counts appear dark.
-A partial final window retains raw counts for its shorter exposure. Use a duration
-that is a multiple of `window_ms` for equal exposures.
+The waterfall uses one continuous block acquisition. It writes events while the
+device keeps recording; it never restarts acquisition between files. Elapsed time
+comes from unfolded SYNC counters and fine delays using the initial measured SYNC
+rate, which is recorded and held fixed for the run. This assumes a stable laser
+clock. No first-photon time subtraction is performed.
 
-`max_records` is event capacity, not bytes; the default 2000000 needs about 18 MB
-for API arrays plus processing copies. A pre-capture rate check requires buffer
-headroom. Completion, capacity, and warning checks reject detected failures.
-Indefinite streaming, high rates, and long-term stability still need validation.
+### Many-hour operation
+
+`./run-python waterfall.py` records for **8 hours by default** and plots afterward.
+Set `profiles.waterfall.duration_ms` to another positive duration. Ctrl+C or SIGTERM
+requests a graceful stop, drains the final block, checks acquisition integrity,
+and plots the saved interval. Signal handling under the emulated runtime still
+needs live validation. Do not use SIGKILL if you want a graceful final drain;
+previously committed blocks remain readable after an abrupt exit.
+
+Streaming settings in the same JSON profile:
+
+- `max_records: 2000000`: capacity of each API block, no longer the full run.
+  The API allocates two buffers (about 36 MB combined), plus processing copies.
+- `poll_ms: 1000`: read/write interval. The script checks initial rate headroom
+  against this interval and checks hardware flags after each block.
+- `min_free_disk_gb: 10`: stop with an explicit failed status when disk free space
+  falls below the reserve. Already committed blocks remain available.
+- `window_ms: 100`: requested analysis window.
+- `preview_max_columns: 2000`: cap overview size. Long recordings use an integer
+  multiple of window_ms; the actual width is saved in waterfall-summary.json.
+- `save_ptu: false`: event blocks are sufficient for replotting; enable only if
+  the additional original PTU representation is needed.
+
+The acquisition and overview do not load the entire event history into RAM.
+Disk use still grows with time and photon rate. Files are written at approximately
+one per poll interval when events are present. Timestamp storage is about 17 bytes
+per photon plus file overhead. Progress is printed about once a minute. Final
+plot generation reads the recording block by block and can take time on long runs.
+A single log color scale covers the displayed interval; zero counts appear dark.
+A partial last window retains raw counts for its shorter exposure.
+
+Use the replot command below while recording or after a failure to inspect committed
+data. For a detailed slice, add `--start-seconds 120 --end-seconds 130`; this uses
+the requested 100 ms windows if the interval fits preview_max_columns. Replotting
+overwrites the overview files, never the event blocks. Older decoded-events.npz
+recordings remain supported.
+
+The tests exercise final draining, graceful stop, disk-reserve failure, and window
+count conservation. Short block acquisition and many-hour stability are separate
+hardware validation requirements; successful unit tests do not establish lossless
+sustained operation. Capacity checks and hardware flags cannot alone prove that
+no native software buffer overruns occurred; review acquisition warnings as well.
 
 ## Replot and test without hardware
 

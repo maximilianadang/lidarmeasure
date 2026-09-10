@@ -3,7 +3,6 @@ from contextlib import contextmanager
 import ctypes as ct
 from datetime import datetime, timezone
 import hashlib
-import json
 import math
 import os
 from pathlib import Path
@@ -12,6 +11,7 @@ import time
 import numpy as np
 from capture_config import ROOT, load_settings, snapshot_settings, configure, check_rates, check_histogram
 from plotting import generate_plots
+from stream_capture import stream_events as events, atomic_json
 
 
 def write_json(path, value):
@@ -21,7 +21,7 @@ def write_json(path, value):
         if isinstance(value, (list, tuple)):
             return [clean(v) for v in value]
         return None if isinstance(value, float) and not math.isfinite(value) else value
-    path.write_text(json.dumps(clean(value), indent=2, allow_nan=False) + '\n')
+    atomic_json(path, clean(value))
 
 
 @contextmanager
@@ -41,19 +41,24 @@ def device_session(settings, profile, out):
             sn.closeDevice()
 
 
-def check_acquisition(sn, mode):
+def hardware_flags(sn, mode):
     library = Path(os.environ['LIDAR_RUNTIME_DIR']) / 'package/snapi-1.1.2/snAPI/libmhlib.so'
     flags = ct.c_int()
     rc = ct.CDLL(str(library)).MH_GetFlags(ct.c_int(sn.deviceConfig['Index']), ct.byref(flags))
     mask = 0x16 if mode == 'T3' else 0x12
     if rc < 0 or flags.value & mask:
         raise RuntimeError(f'Hardware flags check failed: rc={rc}, flags={flags.value}')
+    return flags.value
+
+
+def check_acquisition(sn, mode, stopped=False):
+    flags = hardware_flags(sn, mode)
     if not sn.getMeasDescription():
         raise RuntimeError('Could not read acquisition metadata')
     description = sn.measDescription
-    if description.get('WarningsFlag', 0) or description.get('StopReason') != 'TimeOver':
+    if description.get('WarningsFlag', 0) or description.get('StopReason') not in (('Manual', 'TimeOver') if stopped else ('TimeOver',)):
         raise RuntimeError(f'Incomplete or invalid acquisition: {description}')
-    return dict(hardware_flags=flags.value, measurement_description=description)
+    return dict(hardware_flags=flags, measurement_description=description)
 
 
 def histogram(sn, measurement, settings, profile, out, rates):
@@ -72,34 +77,6 @@ def histogram(sn, measurement, settings, profile, out, rates):
                 channel_counts=data.sum(axis=1).tolist(), peak_channel=channel,
                 peak_bin=peak, peak_time_ns=float(bins[peak] / 1000), peak_counts=int(data[channel, peak]))
 
-
-def events(sn, measurement, settings, profile, out, rates):
-    resolution = float(sn.deviceConfig['Resolution'])
-    if resolution != profile['expected_bin_width_ps']:
-        raise RuntimeError(f'Unexpected resolution: {resolution} ps')
-    predicted = sum(rates[1:]) * profile['duration_ms'] / 1000
-    if predicted * 2 >= profile['max_records']:
-        raise RuntimeError('Increase max_records or shorten duration_ms: insufficient buffer headroom')
-    if not measurement.measure(acqTime=profile['duration_ms'], size=profile['max_records'],
-                               waitFinished=True, savePTU=profile['save_ptu']):
-        raise RuntimeError('Continuous event acquisition failed')
-    packed, channels = (np.array(x, copy=True) for x in measurement.getData())
-    np.savez(out / 'events.npz', packed_t3=packed, channels=channels)
-    if len(packed) >= profile['max_records']:
-        raise RuntimeError('Event buffer reached capacity; recording may be incomplete')
-    if not sn.getMeasDescription():
-        raise RuntimeError('Could not read timestamp metadata')
-    average = sn.measDescription.get('AveSyncRate', 0)
-    sync_rate = float(average or rates[0])
-    if not math.isfinite(sync_rate) or sync_rate <= 0:
-        raise RuntimeError('Invalid SYNC rate for timestamps')
-    delay_ps = measurement.dTime_T3(packed).astype(np.float64) * resolution
-    elapsed_s = measurement.nSync_T3(packed).astype(np.float64) / sync_rate + delay_ps * 1e-12
-    np.savez(out / 'decoded-events.npz', elapsed_s=elapsed_s, delay_ps=delay_ps, channels=channels)
-    return dict(bin_width_ps=resolution, records=len(packed),
-                channel_counts=np.bincount(channels, minlength=5).tolist(),
-                sync_rate_for_timestamps_hz=sync_rate,
-                sync_rate_source='AveSyncRate' if average else 'pre-capture SYNC rate')
 
 
 def run(profile_name):
@@ -124,12 +101,13 @@ def run(profile_name):
             summary.update(rates_before_Hz=rates, config=sn.deviceConfig)
             check_rates(settings, rates)
             acquire = events if profile_name == 'waterfall' else histogram
-            summary.update(acquire(sn, measurement, settings, profile, out, rates))
-            summary.update(check_acquisition(sn, profile['mode']))
+            options = {'check_health': lambda: hardware_flags(sn, profile['mode'])} if profile_name == 'waterfall' else {}
+            summary.update(acquire(sn, measurement, settings, profile, out, rates, **options))
+            summary.update(check_acquisition(sn, profile['mode'], summary.get('stop_requested', False)))
         summary['status'] = 'plotting'
         write_json(out / 'summary.json', summary)
         generate_plots(out, script='plot_waterfall.py' if profile_name == 'waterfall' else 'plot_histogram.py')
-        summary['status'] = 'complete'
+        summary['status'] = 'stopped' if summary.get('stop_requested') else 'complete'
     except BaseException as error:
         summary.update(status='failed', error=f'{type(error).__name__}: {error}')
         raise

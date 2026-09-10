@@ -23,12 +23,15 @@
     },
     "waterfall": {
       "mode": "T3",
-      "duration_ms": 10000,
+      "duration_ms": 28800000,
       "window_ms": 100,
       "max_records": 2000000,
-      "save_ptu": true,
+      "save_ptu": false,
       "binning_code": 0,
-      "expected_bin_width_ps": 80
+      "expected_bin_width_ps": 80,
+      "poll_ms": 1000,
+      "min_free_disk_gb": 10,
+      "preview_max_columns": 2000
     }
   },
   "plot": {

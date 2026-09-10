@@ -17,7 +17,7 @@ def load_settings(profile_name, argv=None):
     expected_mode = {"capture": "T3", "vendor-demo": "T2", "waterfall": "T3"}[profile_name]
     if profile["mode"] != expected_mode:
         raise ValueError(f"{profile_name} requires mode {expected_mode}")
-    keys = ["duration_ms"] + (["window_ms", "max_records"] if profile_name == "waterfall" else ["export_bins"])
+    keys = ["duration_ms"] + (["window_ms", "max_records", "poll_ms", "preview_max_columns"] if profile_name == "waterfall" else ["export_bins"])
     keys += ["bin_width_ps", "num_bins"] if expected_mode == "T2" else ["expected_bin_width_ps"]
     for key in keys:
         if type(profile[key]) is not int or profile[key] <= 0:
@@ -30,6 +30,10 @@ def load_settings(profile_name, argv=None):
         raise ValueError("save_ptu must be a JSON boolean")
     if profile_name == "waterfall" and profile["window_ms"] > profile["duration_ms"]:
         raise ValueError("window_ms must not exceed duration_ms")
+    if profile_name == "waterfall":
+        reserve = profile["min_free_disk_gb"]
+        if type(reserve) not in (float, int) or not math.isfinite(reserve) or reserve <= 0:
+            raise ValueError("min_free_disk_gb must be finite and positive")
     expected = settings["expected_sync_rate_hz"]
     tolerance = settings["sync_rate_tolerance_hz"]
     if not 0 < tolerance < expected:

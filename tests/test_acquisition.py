@@ -75,20 +75,6 @@ class AcquisitionDataTests(unittest.TestCase):
             self.assertEqual(result['channel_counts'], [0, 3, 11])
             self.assertTrue((Path(tmp)/'histogram.npz').exists())
 
-    def test_event_decoding_retains_acquisition_origin(self):
-        import numpy as np
-        sn = Mock(deviceConfig={'Resolution': 80}, measDescription={'AveSyncRate': 10000000})
-        measurement = Mock()
-        measurement.getData.return_value = (np.array([1, 2]), np.array([1, 1]))
-        measurement.dTime_T3.return_value = np.array([10, 20])
-        measurement.nSync_T3.return_value = np.array([1000, 2000])
-        with tempfile.TemporaryDirectory() as tmp:
-            result = acquisition.events(sn, measurement, {},
-                       dict(expected_bin_width_ps=80, duration_ms=1, max_records=100, save_ptu=False), Path(tmp), [10000000, 1])
-            with np.load(Path(tmp)/'decoded-events.npz') as data:
-                np.testing.assert_allclose(data['elapsed_s'], [.0001000008, .0002000016])
-            self.assertEqual(result['records'], 2)
-
     def test_hardware_flags_use_selected_device(self):
         sn = Mock(deviceConfig={'Index': 3}, measDescription={'WarningsFlag': 0, 'StopReason': 'TimeOver'})
         library = Mock()
