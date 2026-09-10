@@ -80,8 +80,9 @@ Generated measurements and runtimes are excluded from Git.
 
 ## Range and waterfall interpretation
 
-The fixed reference is the approximate 18.3 m target at 58.40 ns in capture
-`20260910T015320Z`. Both plotters use `R = R_ref + c*(t-t_ref)/2` and raw counts/R⁴.
+The current fixed reference is the baffle edge at zero range, with approximately
+38 ns measured delay reported by the user. Both plotters use
+`R = c*(t - 38 ns)/2` and raw counts/R⁴. This replaces the earlier 18.3 m reference.
 New captures never re-anchor their peaks. This weighting emphasizes nearer returns;
 it is not inverse-fourth-power loss compensation. Background is not subtracted.
 The 10 MHz repetition rate leaves about 15 m of range ambiguity; calibration selects
@@ -215,3 +216,10 @@ bin coordinate 655.28 ns). This is about 98.24 m of delay-equivalent range span,
 less than the approximately 149.90 m pulse-period ambiguity interval at 1 MHz.
 The prior reference calibration remains unverified at the new repetition rate.
 These current settings supersede the full-period export example above.
+
+The baffle calibration is approximate and has not yet been checked with a fresh
+capture. Delays below 38 ns map to negative range and are excluded from range
+plots; the full raw histogram remains saved. Zero range is excluded from counts/R⁴
+because division by zero is undefined. At 8192 × 80 ps, the nominal positive-range
+window extends to about 92.55 m after subtracting the 38 ns offset. No pulse-period
+wrapping is applied by this linear calibration.

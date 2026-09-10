@@ -38,16 +38,17 @@
   },
   "plot": {
     "channel": 1,
-    "reference_distance_m": 18.3,
-    "reference_delay_ns": 58.4,
-    "reference_capture": "20260910T015320Z",
+    "reference_distance_m": 0,
+    "reference_delay_ns": 38,
+    "reference_capture": null,
     "delay_window_ns": [
       0,
       655.36
     ],
     "y_transform": "counts_divided_by_range_fourth_power",
     "range_axis_min_m": 0,
-    "range_axis_max_m": null
+    "range_axis_max_m": null,
+    "reference_description": "Baffle edge defines zero range; approximately 38 ns delay reported by user"
   },
   "output_dir": "output"
 }

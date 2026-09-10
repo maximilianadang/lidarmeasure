@@ -54,8 +54,8 @@ def load_settings(profile_name, argv=None):
     for key in ("reference_distance_m", "reference_delay_ns"):
         if type(plot[key]) not in (int, float) or not math.isfinite(plot[key]):
             raise ValueError(f"Invalid plot {key}")
-    if plot["reference_distance_m"] <= 0:
-        raise ValueError("Reference distance must be positive")
+    if plot["reference_distance_m"] < 0:
+        raise ValueError("Reference distance must be nonnegative")
     if type(plot["channel"]) is not int or not 1 <= plot["channel"] <= 4:
         raise ValueError("Plot channel must be CH1 through CH4")
     window = plot["delay_window_ns"]
