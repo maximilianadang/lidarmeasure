@@ -223,3 +223,9 @@ plots; the full raw histogram remains saved. Zero range is excluded from counts/
 because division by zero is undefined. At 8192 × 80 ps, the nominal positive-range
 window extends to about 92.55 m after subtracting the 38 ns offset. No pulse-period
 wrapping is applied by this linear calibration.
+
+Current bin-width update: all profiles use 160 ps (T3 binning code 1), retaining
+8192 bins. The stored histogram spans 1310.72 ns. At 1 MHz the plotted delay window
+remains one pulse period, 0–1000 ns, because a longer histogram does not extend the
+unambiguous range. Range-bin spacing is approximately 24 mm. The 38 ns baffle
+reference is retained; changing binning does not automatically recalibrate it.
