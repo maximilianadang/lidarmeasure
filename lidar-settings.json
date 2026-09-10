@@ -20,6 +20,15 @@
       "bin_width_ps": 100,
       "num_bins": 1000,
       "export_bins": 1000
+    },
+    "waterfall": {
+      "mode": "T3",
+      "duration_ms": 10000,
+      "window_ms": 100,
+      "max_records": 2000000,
+      "save_ptu": true,
+      "binning_code": 0,
+      "expected_bin_width_ps": 80
     }
   },
   "plot": {

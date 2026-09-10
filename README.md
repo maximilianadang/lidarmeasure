@@ -137,6 +137,60 @@ T2 transfers every SYNC event: approximately 40 MB of raw data per second at
 lighter at the detector rates tested here. T3 is the practical starting point
 for ongoing lidar acquisition on this emulated runtime.
 
+## Continuous waterfall capture
+
+```bash
+./run-python waterfall.py
+# Optional alternate settings bundle:
+./run-python waterfall.py --settings /absolute/path/to/lidar-settings.json
+```
+
+This runs **one continuous T3 acquisition**, waits for the configured duration,
+then produces a range–time heatmap on native Python. Setup and plotting add wall
+clock time beyond the acquisition duration. There are no intentional stop/start
+gaps between waterfall columns and no live display in this version.
+
+Edit `profiles.waterfall` in `lidar-settings.json`:
+
+- `duration_ms`: total acquisition time; default 10000 (10 seconds).
+- `window_ms`: waterfall column exposure; default 100 (100 columns in 10 seconds).
+- `max_records`: in-memory event capacity; default 2000000 (about 18 MB for the
+  API event arrays, plus processing copies). This is a record count, not bytes.
+- `save_ptu`: save the original time-tag stream; default true.
+- `binning_code` and `expected_bin_width_ps`: same T3 controls as static capture.
+
+The shared `plot` section supplies CH1 selection, delay window, fixed range
+calibration, and counts/R⁴ weighting. One logarithmic color scale applies to the
+whole image. Zero counts appear dark. A shortened last window retains its actual
+exposure and raw counts, so it may appear fainter; choose a duration divisible by
+window_ms for equal exposures.
+
+Outputs live under `measurements/waterfall-TIMESTAMP/`:
+
+- `waterfall.png`: elapsed time on x, range on y, counts/R⁴ as color.
+- `waterfall.npz`: raw counts and weighted matrices (time × range), plus bin edges.
+- `events.npz`: packed unfolded T3 events and channels.
+- `decoded-events.npz`: elapsed times, fine delays, and channels.
+- `measurement.ptu` when enabled; settings snapshots and JSON summaries.
+
+`latest-waterfall.txt` points to the latest successful result. Replot without
+hardware using `/usr/bin/python3 -I plot_waterfall.py /path/to/capture-directory`.
+
+The implementation follows the event-decoding approach of PicoQuant's
+[Demo_RecordViewer_UF.py](https://github.com/PicoQuant/snAPI/blob/main/demos/Demo_RecordViewer_UF.py)
+and the histogram-window concept of
+[Demo_HistogramsOverTime.py](https://github.com/PicoQuant/snAPI/blob/main/demos/Demo_HistogramsOverTime.py).
+It uses methods available in snAPI 1.1.2. Timestamp windows use unfolded SYNC
+counters and fine delays, not host polling times; the clock starts at acquisition,
+not at the first detected photon. Elapsed seconds assume a stable SYNC rate.
+
+A 10-second hardware test recorded 83,801 CH1 photons in 100 windows, with hardware
+flags and acquisition warnings both zero. All selected photons were accounted for
+in the waterfall. Memory capacity and acquisition-completion checks reject
+obviously incomplete recordings. This bounded in-memory workflow is intended for
+short experiments; indefinite streaming and sustained high-rate acquisition need
+block processing and further validation.
+
 ## Results and limitations
 
 The T3 test recorded 17,162 CH1 events in one second, with a peak at 42.88 ns and

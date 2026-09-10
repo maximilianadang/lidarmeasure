@@ -14,10 +14,10 @@ def load_settings(profile_name):
     path = args.settings.resolve()
     settings = json.loads(path.read_text())
     profile = settings["profiles"][profile_name]
-    expected_mode = {"capture": "T3", "vendor-demo": "T2"}[profile_name]
+    expected_mode = {"capture": "T3", "vendor-demo": "T2", "waterfall": "T3"}[profile_name]
     if profile["mode"] != expected_mode:
         raise ValueError(f"{profile_name} requires mode {expected_mode}")
-    keys = ["duration_ms", "export_bins"]
+    keys = ["duration_ms"] + (["window_ms", "max_records"] if profile_name == "waterfall" else ["export_bins"])
     keys += ["bin_width_ps", "num_bins"] if expected_mode == "T2" else ["expected_bin_width_ps"]
     for key in keys:
         if type(profile[key]) is not int or profile[key] <= 0:
@@ -28,6 +28,8 @@ def load_settings(profile_name):
         raise ValueError("Invalid binning_code")
     if type(profile["save_ptu"]) is not bool:
         raise ValueError("save_ptu must be a JSON boolean")
+    if profile_name == "waterfall" and profile["window_ms"] > profile["duration_ms"]:
+        raise ValueError("window_ms must not exceed duration_ms")
     expected = settings["expected_sync_rate_hz"]
     tolerance = settings["sync_rate_tolerance_hz"]
     if not 0 < tolerance < expected:
