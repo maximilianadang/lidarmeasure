@@ -1,0 +1,9 @@
+{
+  "extends": "lidar-settings.json",
+  "profiles": {
+    "measurement": {
+      "kind": "background",
+      "preview_max_events": 10000
+    }
+  }
+}

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lidar live preview</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='none' stroke='%230078a8' stroke-width='3' d='M2 28h8l4-24 5 24h11'/%3E%3C/svg%3E">
+<style>
+body{margin:0;padding:24px;font:16px system-ui,sans-serif;background:#f4f7fa;color:#142b3b}main{max-width:1200px;margin:auto}h1{font-size:24px;margin:0 0 8px}p{overflow-wrap:anywhere}canvas{width:100%;height:65vh;min-height:280px;background:white;border:1px solid #ccd7df}#status{min-height:1.5em}small{font-size:14px;color:#41596b}
+</style>
+</head>
+<body><main><h1>Lidar · latest batch</h1><small id="run"></small><p id="status" role="status">Connecting…</p><button id="retry" hidden>Reconnect</button><canvas id="plot" role="img" aria-label="Latest batch photon counts versus range"></canvas></main>
+<script>
+const canvas=document.getElementById('plot'), ctx=canvas.getContext('2d'), status=document.getElementById('status');
+let config, latest;
+const retry=document.getElementById('retry');
+function disconnected(){status.textContent='Preview disconnected. Start acquisition, then reconnect.';retry.hidden=false;}
+retry.onclick=()=>{retry.hidden=true;start();};
+function draw(){
+ if(!latest)return;
+ const w=canvas.clientWidth,h=canvas.clientHeight,dpr=window.devicePixelRatio||1;
+ canvas.width=w*dpr;canvas.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+ const left=65,right=w-24,top=24,bottom=h-55,p=config.plot;
+ if(latest.event_times_s){
+  const events=latest.event_times_s,lo=events[0]??0,hi=Math.max(events.at(-1)??0,lo+0.000001);
+  ctx.font='14px system-ui';ctx.fillStyle='#41596b';ctx.textAlign='center';
+  for(let j=0;j<=5;j++)ctx.fillText((lo+(hi-lo)*j/5).toFixed(6),left+(right-left)*j/5,bottom+24);
+  ctx.fillText('Photon arrival time since acquisition start (s)',(left+right)/2,h-8);
+  ctx.strokeStyle='#0078a8';ctx.lineWidth=1;ctx.beginPath();
+  for(const t of events){const x=left+(t-lo)/(hi-lo)*(right-left);ctx.moveTo(x,(top+bottom)/2-20);ctx.lineTo(x,(top+bottom)/2+20);}
+  ctx.stroke();
+  if(!events.length)ctx.fillText('No detector events in this batch',(left+right)/2,(top+bottom)/2);
+  return;
+ }
+
+ const lo=p.range_axis_min_m??0,hi=p.waterfall_range_max_m??20;
+ const range=i=>p.reference_distance_m+(i*latest.bin_width_ps/1000-p.reference_delay_ns)*1e-9*299792458/2;
+ let maximum=1;
+ for(let i=0;i<latest.counts.length;i++)if(range(i)>=lo&&range(i)<=hi)maximum=Math.max(maximum,latest.counts[i]);
+ ctx.font='14px system-ui';ctx.lineWidth=1;
+ for(let j=0;j<=5;j++){
+  const y=bottom-(bottom-top)*j/5,x=left+(right-left)*j/5;
+  ctx.strokeStyle='#e3e9ee';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(right,y);ctx.stroke();
+  ctx.fillStyle='#41596b';ctx.textAlign='right';ctx.fillText((maximum*j/5).toFixed(0),left-8,y+5);
+  ctx.textAlign='center';ctx.fillText((lo+(hi-lo)*j/5).toFixed(1),x,bottom+24);
+ }
+ ctx.fillText('Range (m)',(left+right)/2,h-8);
+ ctx.save();ctx.translate(16,(top+bottom)/2);ctx.rotate(-Math.PI/2);ctx.fillText('Photon counts',0,0);ctx.restore();
+ ctx.save();ctx.beginPath();ctx.rect(left,top,right-left,bottom-top);ctx.clip();ctx.strokeStyle='#0078a8';ctx.lineWidth=1.5;ctx.beginPath();
+ for(let i=0;i<latest.counts.length;i++){
+  const x=left+(range(i)-lo)/(hi-lo)*(right-left), y=bottom-latest.counts[i]/maximum*(bottom-top);
+  if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  ctx.lineTo(left+(range(i+1)-lo)/(hi-lo)*(right-left),y);
+ }
+ ctx.stroke();ctx.restore();
+}
+async function poll(){
+ try{
+  const response=await fetch('/preview.json',{cache:'no-store',signal:AbortSignal.timeout(5000)});
+  if(response.status===404){status.textContent='Waiting for first batch…';setTimeout(poll,config.refresh_ms);return;}
+  if(!response.ok)throw Error('Preview unavailable');
+  const snapshot=await response.json();
+  if(!latest||latest.batch!==snapshot.batch){latest=snapshot;canvas.setAttribute('aria-label',latest.event_times_s?'Individual photon arrival timestamps':'Latest batch photon counts versus range');draw();}
+  status.textContent=`CH${latest.channel} · Batch ${latest.batch} · `+(latest.event_times_s?`${latest.total_events} photon events; showing ${latest.event_times_s.length} latest events${latest.omitted_events?`; ${latest.omitted_events} earlier events omitted from preview`:''}`:'Latest available measurements');
+  setTimeout(poll,config.refresh_ms);
+ }catch(error){disconnected();}
+}
+async function start(){
+ try{const response=await fetch('/config.json',{signal:AbortSignal.timeout(5000)});if(!response.ok)throw Error();config=await response.json();document.getElementById('run').textContent=config.run;poll();}
+ catch(error){disconnected();}
+}
+window.addEventListener('resize',draw);start();
+</script></body></html>

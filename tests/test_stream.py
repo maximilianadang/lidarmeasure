@@ -5,12 +5,12 @@ import unittest
 from unittest.mock import Mock, patch
 import numpy as np
 from stream_capture import stream_events
-from plot_waterfall import stream_histogram
+from histogram_data import capture_histograms
 
 
 class StreamingTests(unittest.TestCase):
     def profile(self):
-        return dict(duration_ms=1000, window_ms=100, max_records=100, poll_ms=10,
+        return dict(duration_ms=1000, window_ms=100, chunk_records=2, max_records=100, poll_ms=10,
                     min_free_disk_gb=1, preview_max_columns=5, save_ptu=False, expected_bin_width_ps=80)
 
     def measurement(self):
@@ -29,7 +29,7 @@ class StreamingTests(unittest.TestCase):
             self.assertEqual(result['records'],3)
             self.assertEqual(m.getBlock.call_count,2)
             config=dict(channel=1,reference_distance_m=18.3,reference_delay_ns=58.4,delay_window_ns=[0,100])
-            te,re,counts,weighted,total,window=stream_histogram(out,p,config)
+            te,re,counts,histogram,total,window,interval=capture_histograms(out,p,config)
             self.assertLessEqual(len(te)-1,5)
             self.assertEqual(counts.sum(),3)
             self.assertEqual(total,3)
@@ -53,6 +53,18 @@ class StreamingTests(unittest.TestCase):
             self.assertTrue(result['stop_requested'])
             m.stopMeasure.assert_called_once()
             self.assertEqual(result['records'],3)
+
+    def test_motion_completion_stops_and_drains_without_fixed_duration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp); m = self.measurement()
+            with patch('stream_capture.time.sleep'), patch('stream_capture.shutil.disk_usage', return_value=Mock(free=10**12)):
+                result = stream_events(Mock(deviceConfig={'Resolution': 80}), m, {'motion': True},
+                                       self.profile(), out, [10000000, 1], check_health=Mock(side_effect=[False, True]))
+            self.assertEqual(m.startBlock.call_args.kwargs['acqTime'], 0)
+            m.stopMeasure.assert_called_once()
+            self.assertTrue(result['motion_complete'])
+            self.assertEqual(result['records'], 3)
+            self.assertEqual(result['stream']['stop_reason'], 'motion_complete')
 
 class T2DecoderTests(unittest.TestCase):
     def test_sync_reference_survives_block_boundaries(self):

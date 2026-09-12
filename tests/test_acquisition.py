@@ -44,7 +44,7 @@ class LifecycleTests(unittest.TestCase):
             def capture(sn, measurement, settings, profile, out, rates):
                 (out/'histogram.npz').write_bytes(b'raw data')
                 return {}
-            with patch('acquisition.ROOT', root), patch('acquisition.load_settings', return_value=(settings, profile)), patch('acquisition.snapshot_settings', snapshot), patch('acquisition.device_session', session), patch('acquisition.histogram', capture), patch('acquisition.check_rates'), patch('acquisition.check_acquisition', return_value={}), patch('acquisition.generate_plots', side_effect=RuntimeError('plot failed')), patch.dict('os.environ', LIDAR_RUNTIME_DIR='/tmp'), patch('acquisition.time.sleep'):
+            with patch('acquisition.ROOT', root), patch('acquisition.load_settings', return_value=(settings, profile)), patch('acquisition.snapshot_settings', snapshot), patch('acquisition.device_session', session), patch('acquisition.histogram', capture), patch('acquisition.check_rates'), patch('acquisition.check_acquisition', return_value={}), patch('acquisition.measurement_clock', return_value={'source': 'test'}), patch('acquisition.generate_plots', side_effect=RuntimeError('plot failed')), patch.dict('os.environ', LIDAR_RUNTIME_DIR='/tmp'), patch('acquisition.time.sleep'):
                 with self.assertRaisesRegex(RuntimeError, 'plot failed'):
                     acquisition.run('capture')
             out = next((root/'output').iterdir())
@@ -54,12 +54,12 @@ class LifecycleTests(unittest.TestCase):
 
     def test_invalid_duration_rejected_before_hardware(self):
         settings = json.loads((acquisition.ROOT/'lidar-settings.json').read_text())
-        settings['profiles']['capture']['duration_ms'] = 0
+        settings['profiles']['measurement']['duration_ms'] = 0
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)/'settings.json'
             path.write_text(json.dumps(settings))
             with self.assertRaisesRegex(ValueError, 'duration_ms'):
-                load_settings('capture', ['--settings', str(path)])
+                load_settings('measurement', ['--settings', str(path)])
 
 class AcquisitionDataTests(unittest.TestCase):
     def test_histogram_exports_and_selected_channel_summary(self):
@@ -82,3 +82,26 @@ class AcquisitionDataTests(unittest.TestCase):
         with patch('acquisition.ct.CDLL', return_value=library), patch.dict('os.environ', LIDAR_RUNTIME_DIR='/tmp'):
             acquisition.check_acquisition(sn, 'T3')
         self.assertEqual(library.MH_GetFlags.call_args.args[0].value, 3)
+
+    def test_start_epoch_preserves_all_96_bits_and_reports_errors(self):
+        import ctypes as ct
+        epoch = 1789150000 * 10**12 + 123456789012
+        library = Mock()
+        def get_start(index, *words):
+            self.assertEqual(index, 3)
+            for pointer, shift in zip(words, (64, 32, 0)):
+                ct.cast(pointer, ct.POINTER(ct.c_uint32))[0] = (epoch >> shift) & 0xffffffff
+            return 0
+        library.MH_GetStartTime.side_effect = get_start
+        with patch('acquisition.ct.CDLL', return_value=library), patch.dict('os.environ', LIDAR_RUNTIME_DIR='/tmp'):
+            clock = acquisition.measurement_clock(Mock(deviceConfig={'Index': 3}))
+            self.assertEqual(int(clock['measurement_start_unix_ps']), epoch)
+            self.assertEqual(clock['measurement_start_unix_seconds'], 1789150000)
+            self.assertEqual(clock['measurement_start_subsecond_ps'], 123456789012)
+            library.MH_GetStartTime.side_effect = None
+            library.MH_GetStartTime.return_value = -1
+            with self.assertRaisesRegex(RuntimeError, 'MH_GetStartTime failed'):
+                acquisition.measurement_clock(Mock(deviceConfig={'Index': 3}))
+            library.MH_GetStartTime.return_value = 0
+            with self.assertRaisesRegex(RuntimeError, 'returned zero'):
+                acquisition.measurement_clock(Mock(deviceConfig={'Index': 3}))

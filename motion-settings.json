@@ -1,0 +1,10 @@
+{
+  "extends": "lidar-settings.json",
+  "motion": {
+    "targets": [{"azimuth": 0, "elevation": 6, "duration_s": 30},
+                {"azimuth": 0, "elevation": 0, "duration_s": 30}],
+    "timeout_s": 30,
+    "acquisition_timeout_s": 2,
+    "polarity": "polarity-2026-09-08.json"
+  }
+}

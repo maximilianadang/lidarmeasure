@@ -1,259 +1,223 @@
 # lidarmeasure
 
-Capture and plot lidar returns from a PicoQuant MultiHarp 150 4N using snAPI on
-ARM64 Linux through the verified x86-64 QEMU runtime.
+Record MultiHarp lidar events and baseline-relative mount coordinates on the Orin,
+with bounded RAM, chunked disk writes, and a browser preview over SSH.
 
 ## Run
 
-From this repository:
+Connect from your computer with port forwarding:
 
 ```bash
-./run-python capture-returns.py          # One static histogram and range plot
-./run-python waterfall.py                # Continuous recording, then waterfall
-./run-python examples/histogram-simple.py # Vendor-style T2 histogram and plots
+ssh -L 8765:127.0.0.1:8765 dusty@ORIN_HOST
 ```
 
-Each command loads `lidar-settings.json`. To choose another settings bundle:
+On the Orin:
 
 ```bash
-./run-python waterfall.py --settings /absolute/path/to/lidar-settings.json
+cd ~/workspace/terraforming_mars/lidarmeasure
+./run-python lidarmeasure.py
 ```
 
-The local `.runtime` symlink points to the established runtime. Alternatively set
-`LIDAR_RUNTIME_DIR=/home/dusty/snapi-arm64-investigation`. For another machine,
-see [ARM64 setup](docs/arm64-setup.md). Native `/usr/bin/python3` needs NumPy and
-Matplotlib; plotting runs with `-I` to avoid incompatible user-site packages.
-Use `./run-python probe.py` to enumerate the device without acquiring.
-Do not run multiple acquisition commands against the device concurrently.
+Open http://localhost:8765 in your computer's browser. The command starts the
+preview for its own run folder before opening the lidar. After recording and
+plotting finish, the preview remains open until Ctrl+C. Refresh for a new run.
+During acquisition, Ctrl+C requests a stop and final drain; SIGKILL cannot drain.
 
-## Settings
+## Configuration
 
-`lidar-settings.json` is the entry point for all three commands:
+`lidar-settings.json` is the configuration entry point. Override it with
+`./run-python lidarmeasure.py --settings /absolute/path/settings.json`.
 
-- `profiles.capture`: T3, default 1000 ms; full histogram plus selected CSV bins.
-- `profiles.waterfall`: T3, default 28800000 ms (8 hours), with 100 ms waterfall windows.
-- `profiles.vendor-demo`: T2, default 1000 ms, 100 ps × 1000 bins, with PTU output.
-- `plot`: detector channel, delay window, fixed reference calibration, and counts/R⁴.
-- `system_ini`: snAPI paths, logging, and buffer settings; default `system.ini`.
-- `device_ini`: thresholds, edges, divider, channel enables and offsets; default `device.ini`.
+- `profiles.measurement.duration_ms`: currently 120000 (two minutes).
+- `mode`, `bin_width_ps`, `num_bins`: currently T2, 800 ps, 1200 bins.
+- `window_ms`, `preview_max_columns`: 100 ms windows, at most 2000 overview columns.
+- `max_records`, `poll_ms`: 12 million API records; request reads every 100 ms.
+- `chunk_records`, `chunk_seconds`: commit at one million detector events or five seconds.
+- `min_free_disk_gb`: stop on disk reserve (currently 10 GB).
+- `save_ptu`: optionally retain the vendor PTU stream; normally false.
+- `plot`: channel, calibration, delay/range bounds, and selected histogram interval.
+- `mount`: enable sampling, sibling repository, port, baseline, signs, and sample period.
+- `preview`: enable webpage, loopback port (8765), refresh period (500 ms).
+- `system_ini`, `device_ini`: vendor paths/logging and hardware input settings.
 
-INI paths resolve relative to the JSON file. The launcher runs from the repository
-root, each run writes an effective `system.ini` with its own absolute snAPI data path.
-The original system INI is preserved as `system-source.ini`. Expected SYNC rate is a check,
-not a command to set the laser frequency. Physical CH1 is `[Channel_0]` in the
-native device INI and row/channel **1** in output arrays; row 0 represents SYNC.
+Laser repetition rate is set externally; `expected_sync_rate_hz` checks it.
+At 1 MHz the unambiguous target range is about 150 m, not 300 m: flight is round-trip.
+An 800 ps bin is about 12 cm of target range; it is not the optical resolution.
+The configured zero reference is the baffle at approximately 38 ns.
 
-The verified setup is serial `1052684`, laser timing connected to dedicated SYNC,
-MPD detector on CH1, previously 10 MHz SYNC, -170 mV rising edges, divider 1, trigger output off.
-Settings are validated before opening hardware. Device-specific limits are also
-checked by snAPI when the INI is applied.
+## Data and memory
 
-## What each run saves
+All outputs live in `output/TIMESTAMP-measurement/`: event `blocks/*.npz`, frozen
+settings, `summary.json`, `stream-progress.json`, vendor files under `snapi/`,
+and diagnostics under `logs/`. `output/latest-measurement.txt` identifies the
+last successful run; live preview does not depend on that pointer.
 
-Every run has a unique directory under `output/`. The command prints its
-profile, settings source, duration and output directory.
+Raw chunks contain detector acquisition timestamps, delays since preceding SYNC,
+and channels. SYNC records are used for T2 decoding but not retained in these
+chunks. Events before the first SYNC are counted and excluded. Enable PTU for the
+original stream. Delay ambiguity cannot be removed by changing the plot axis.
 
-All runs save copies of the JSON and both INIs, and a common `summary.json` with:
+snAPI allocates about 216 MB in double buffers, plus processing/runtime overhead.
+The detector chunk buffer adds 17 MB; the overview is bounded by its column cap.
+Writes occur on size/time limits and at final drain. Time limits are checked when
+control returns from snAPI, not hard deadlines. An abrupt failure may lose the
+uncommitted chunk. `blocks`, `batches`, `records`, and `committed_records` distinguish
+disk chunks, API deliveries, received detector events, and committed detector events.
+Completed chunks remain readable; failed writes are reported.
 
-- Selected profile, duration, start/end timestamps, and completion/failure status.
-- Settings source, SHA-256 hashes of settings snapshots and top-level Python code,
-  and runtime directory.
-- Count rates, reported device configuration, hardware flags, and acquisition metadata
-  when available. Unavailable non-finite vendor values become JSON `null`.
-- Mode-specific counts and histogram or event details. Schema version is `1`.
+`histogram-summary.npz` is accumulated online. Default plotting reads it without
+rereading events and exports `waterfall.npz` plus the two-panel `waterfall.png`.
+The default uses raw counts and linear colors. The overview covers the full run;
+the histogram uses `plot.histogram_interval.start_s` and `duration_s`.
+Custom intervals or changed settings rebin saved events using the same code.
+Older `decoded-events.npz` and waterfall-profile recordings remain readable.
 
-Static/T2 runs save `histogram.npz`, `histogram.csv`, `histogram.png`,
-`range-counts-over-r4.png`, its CSV, and `range-plot-calibration.json`.
-Waterfall runs save incrementally committed `blocks/00000000.npz` files containing
-elapsed timestamps, fine delays and channels, plus `stream-progress.json` with
-counters, elapsed time, and stream status. Block files are flushed and atomically
-renamed before the progress checkpoint advances. Incomplete `.tmp` files are not
-used. At completion, `waterfall.npz`, `waterfall.png`, and `waterfall-summary.json`
-contain a bounded overview. `measurement.ptu` is optional (`save_ptu`); it defaults
-to false for waterfall to avoid storing the same events twice. Static PTU settings
-are unchanged.
+`preview.json` is one atomically replaced latest-batch histogram, independent of
+disk chunking. The browser has one request in flight and retains no batch history.
+Closing it does not affect recording. Preview errors do not erase recorded events.
 
-The corresponding `latest-measurement.txt`, `latest-vendor-demo.txt`, or
-`latest-waterfall.txt` is updated only after acquisition and plotting succeed.
-Failures are recorded in the run summary; already saved raw data remains available.
-Generated measurements and runtimes are excluded from Git.
+## Mount coordinates
 
-## Range and waterfall interpretation
+Acquisition owns the mount connection; another controller must not open it.
+The native astromount helper issues getters only. Each run saves
+`mount-coordinates.jsonl`, `mount-settings.json`, `mount-baseline.json`, and
+`logs/mount.log`. Default requested sample period is 100 ms; actual UTC/monotonic
+query brackets are recorded. Az/el are model-estimated, baseline-relative FRD
+coordinates, not compass bearings or hardware-synchronized photon pointing.
+The baseline must remain physically valid. Startup read failure prevents capture;
+a later helper failure marks the run failed while preserving lidar data.
 
-The current fixed reference is the baffle edge at zero range, with approximately
-38 ns measured delay reported by the user. Both plotters use
-`R = c*(t - 38 ns)/2` and raw counts/R⁴. This replaces the earlier 18.3 m reference.
-New captures never re-anchor their peaks. This weighting emphasizes nearer returns;
-it is not inverse-fourth-power loss compensation. Background is not subtracted.
-The 10 MHz repetition rate leaves about 15 m of range ambiguity; calibration selects
-one range branch and has not been independently validated at a second distance.
-80 ps bin spacing corresponds to about 12 mm of range, not guaranteed accuracy.
-
-The waterfall uses one continuous block acquisition. It writes events while the
-device keeps recording; it never restarts acquisition between files. Elapsed time
-comes from unfolded SYNC counters and fine delays using the initial measured SYNC
-rate, which is recorded and held fixed for the run. This assumes a stable laser
-clock. No first-photon time subtraction is performed.
-
-### Many-hour operation
-
-`./run-python waterfall.py` records for **8 hours by default** and plots afterward.
-Set `profiles.waterfall.duration_ms` to another positive duration. Ctrl+C or SIGTERM
-requests a graceful stop, drains the final block, checks acquisition integrity,
-and plots the saved interval. Signal handling under the emulated runtime still
-needs live validation. Do not use SIGKILL if you want a graceful final drain;
-previously committed blocks remain readable after an abrupt exit.
-
-Streaming settings in the same JSON profile:
-
-- `max_records: 12000000`: capacity of each API block, no longer the full run.
-  The API allocates two buffers (about 216 MB combined), plus processing copies.
-- `poll_ms: 1000`: read/write interval. The script checks initial rate headroom
-  against this interval with integrity checks after acquisition to avoid racing the snAPI worker.
-- `min_free_disk_gb: 10`: stop with an explicit failed status when disk free space
-  falls below the reserve. Already committed blocks remain available.
-- `window_ms: 100`: requested analysis window.
-- `preview_max_columns: 2000`: cap overview size. Long recordings use an integer
-  multiple of window_ms; the actual width is saved in waterfall-summary.json.
-- `save_ptu: false`: event blocks are sufficient for replotting; enable only if
-  the additional original PTU representation is needed.
-
-The acquisition and overview do not load the entire event history into RAM.
-Disk use still grows with time and photon rate. Files are written at approximately
-one per poll interval when events are present. Timestamp storage is about 17 bytes
-per photon plus file overhead. Progress is printed about once a minute. Final
-plot generation reads the recording block by block and can take time on long runs.
-A single log color scale covers the displayed interval; zero counts appear dark.
-A partial last window retains raw counts for its shorter exposure.
-
-Use the replot command below while recording or after a failure to inspect committed
-data. For a detailed slice, add `--start-seconds 120 --end-seconds 130`; this uses
-the requested 100 ms windows if the interval fits preview_max_columns. Replotting
-overwrites the overview files, never the event blocks. Older decoded-events.npz
-recordings remain supported.
-
-The tests exercise final draining, graceful stop, disk-reserve failure, and window
-count conservation. Short block acquisition and many-hour stability are separate
-hardware validation requirements; successful unit tests do not establish lossless
-sustained operation. Capacity checks and hardware flags cannot alone prove that
-no native software buffer overruns occurred; review acquisition warnings as well.
-
-## Replot and test without hardware
+## Saved-data tools and diagnostics
 
 ```bash
-/usr/bin/python3 -I plot_histogram.py /path/to/static-capture
-/usr/bin/python3 -I plot_waterfall.py /path/to/waterfall-capture
-python3 -s -m unittest discover -s tests
+/usr/bin/python3 -I plot_waterfall.py output/RUN --start-seconds 2 --end-seconds 3 --color-max 25
+/usr/bin/python3 -I plot_waterfall.py output/RUN --counts-over-r4
+/usr/bin/python3 -I live_preview.py output/RUN
+./run-python probe.py
+./run-python examples/histogram-simple.py
+/usr/bin/python3 -I plot_histogram.py output/VENDOR_RUN
+/usr/bin/python3 -s -m unittest discover -s tests
 ```
 
-Replotting reads the saved settings and data. The plotting window selects native
-bins by their left-edge delay; nonpositive ranges are excluded consistently.
+The vendor example runs the direct snAPI histogram API for comparison with our
+streaming decoder; `plot_histogram.py` renders that format and historical captures.
+It uses `profiles.vendor-demo` (currently T2, 800 ps × 1200 bins, 1 second, PTU on).
+The device probe enumerates hardware without starting acquisition.
+`samples/` retains the original UniHarp reference measurement, not current calibration.
 
-## Code layout
+## Installation and verification
 
-- `capture-returns.py`, `waterfall.py`, and the T2 example: thin entry scripts.
-- `acquisition.py`: one run lifecycle, guaranteed device-close attempt, integrity
-  checks, metadata and export; separate histogram and event acquisition functions.
-- `capture_config.py`: settings loading, validation, snapshots and device setup.
-- `range_transform.py`: shared range conversion and counts/R⁴ weighting.
-- `plot_histogram.py`, `plot_waterfall.py`: their respective visualizations.
-- `plotting.py`: the native plotting subprocess boundary.
+The ignored `.runtime` link points to the assembled QEMU/x86-64 snAPI environment.
+Alternatively set `LIDAR_RUNTIME_DIR`. See [ARM64 setup](docs/arm64-setup.md), its
+[download checksums](docs/download-sha256.json), and `scripts/` for runtime/USB setup.
+Native plotting needs NumPy/Matplotlib; mount logging uses the sibling astromount
+virtualenv. The webpage itself requires no GUI, frontend packages, or hosting service.
 
-Importing acquisition modules does not open hardware. No service layer is required.
-The runtime remains snAPI 1.1.2 / MHLib 4.0 under QEMU 10 with patched libusb.
-See [the vendor tutorial](docs/tutorial.md), [third-party notices](THIRD_PARTY_NOTICES.md),
-and [ARM64 setup](docs/arm64-setup.md) for provenance and setup details.
-On a new host, persistent USB access can be configured with
-`sudo ./scripts/install-usb-access.sh "$USER" 1052684`.
+Tests cover chunk boundaries, final draining, errors, calibration, interval counts,
+cached plotting, helper cleanup, and snapshot replacement. Short live captures
+have succeeded; many-hour stability and guaranteed losslessness are not established.
+Final hardware flags and vendor logs are checked for reported data loss. They do
+not prove that every record was received, nor detect every missing-SYNC condition.
 
-Range axes start at zero by default. `plot.range_axis_min_m` and
-`plot.range_axis_max_m` (null = data upper bound) control display limits only.
-With the current reference, the 0–100 ns delay window maps to about 9.55–24.54 m.
-The region below that interval is shaded as outside the selected range branch,
-not filled with zero counts. Extending axes does not resolve pulse ambiguity or
-create additional measured coverage.
+## Background counting (laser/SYNC off)
 
-## Changing laser repetition rate and finding outputs
+```bash
+./run-python lidarmeasure.py --settings background-settings.json
+```
 
-The current configuration expects **1 MHz**, which requires setting the laser
-itself to 1 MHz. Software does not change the laser frequency. At 1 MHz:
+This small configuration inherits `lidar-settings.json` and selects
+`profiles.measurement.kind: "background"`. Duration, chunking, mount logging,
+and the automatically started webpage use the same settings and lifecycle.
+Omitting `kind` selects normal range capture, which still requires SYNC.
+Background mode requires T2 and does not enable or fire the laser.
 
-- `expected_sync_rate_hz = 1000000`, tolerance `100000` (10%).
-- `plot.delay_window_ns = [0, 1000]` covers a full pulse period.
-- T3 `export_bins = 12500` at 80 ps; T2 `num_bins = export_bins = 10000` at 100 ps.
-- SYNC divider remains 1; timing-bin spacing is unchanged.
+Background chunks contain `elapsed_s` and `channels`, retaining detector events
+before or without SYNC; they deliberately omit `delay_ps`. SYNC events themselves
+are discarded. `background.npz`, `background.csv`, and `background.png` contain
+counts versus acquisition time for the selected detector channel. The live page shows individual arrival timestamps from the latest batch as event
+marks, with no counting windows or averaging. `preview_max_events` in the background
+profile caps the display at the latest 10000 events; any omitted events are clearly
+labeled and all events are still recorded. The saved full-run count summaries remain
+windowed for compact analysis. No range calibration or R⁴ weighting
+is applied. Overview windows may be combined for long captures to keep memory bounded;
+raw events remain available for finer analysis.
 
-For 500 kHz (approximately 300 m unambiguous range), use expected rate 500000,
-tolerance 50000, delay window [0, 2000], T3 export_bins 25000, and T2
-num_bins/export_bins 20000. These settings validate acquisition and select bins;
-they do not by themselves recalibrate or implement modulo-range wrapping.
-The existing reference was measured at 10 MHz and must be verified/recalibrated
-before treating plots at the new repetition rate as calibrated physical ranges.
+Settings may use `extends` to inherit another JSON file and override only selected
+keys. Inherited file paths resolve relative to the file that defines them; the run
+saves the fully resolved configuration. Circular inheritance is rejected.
 
-Each command creates one `output/TIMESTAMP-TYPE/` directory (`capture`,
-`waterfall`, `vendor-demo`, or `probe`). Its data, plots, settings and summaries
-are at that directory's root; `snapi/` contains vendor files/logs, and
-`logs/console.log` contains terminal output, including startup failures.
-There is no shared logs directory for new runs. Acquisition types are alternative
-commands, not substeps of one run. Replotting writes into the selected run folder.
+## Synchronized mount motion
 
-`output/latest-*.txt` points to successful acquisition runs. `output_dir` in JSON
-selects the root, including launcher logs. The launcher allocates the run folder
-before starting the emulated interpreter and passes it as `LIDAR_RUN_DIR`.
-Historical folders have been moved to the new layout; terminal logs with a unique
-recorded run path are attached to that run. Older shared files that cannot be
-reliably assigned are preserved in `output/legacy/`.
+```bash
+./run-python lidarmove.py --settings motion-settings.json
+```
 
-Historical run settings are preserved unchanged when directories are moved.
-Runtime dependencies remain separate from measurement outputs.
+This commands physical motion. Edit `motion.targets` for ordered az/el points;
+each is reached and settled before the next. For nominal travel time, add
+`duration_s` to a target, e.g. `{ "azimuth": 0, "elevation": 6, "duration_s": 60 }`.
+This reuses astromount's duration calculation used by `point.py` and `sequence.py`:
+maximum joint displacement divided by duration, capped at 3°/s. Choose either `duration_s` on every target or one `motion.speed_deg_s` with no
+target durations. Both or neither raises an error before hardware initialization,
+with a minimal configuration fix.
+Arrival is not guaranteed at exactly the requested time. `timeout_s` is the arrival
+timeout for speed-based moves, or extra time after the nominal duration for timed
+moves. For `lidarmove`, recording ends when the last target settles; inherited capture
+duration is ignored. The saved duration is a derived summary-sizing budget from
+the moves and their timeouts, not a recording timer. `polarity` selects the astromount polarity file.
+Baseline and direction calibration must still be valid.
 
-## Current experiment binning
+The same acquisition lifecycle and native mount helper are used. One mount
+connection both logs the existing coordinate schema and runs astromount's
+`Controller.run_pointing(..., cancel=...)`. Motion waits for a valid detector batch
+while acquisition reports running. With no such batch, it never starts. In range
+mode a valid batch requires a pulse-relative return; background mode uses detector
+events without SYNC. This is software coordination, not a shared hardware trigger.
 
-All three acquisition profiles now request 8192 bins at 80 ps, with 1 MHz expected
-SYNC. T3 uses binning code 0 and histogram length code 3; T2 configures 80 ps and
-8192 bins directly. The CSV and waterfall delay window cover 0–655.36 ns (last
-bin coordinate 655.28 ns). This is about 98.24 m of delay-equivalent range span,
-less than the approximately 149.90 m pulse-period ambiguity interval at 1 MHz.
-The prior reference calibration remains unverified at the new repetition rate.
-These current settings supersede the full-period export example above.
+`acquisition_timeout_s` (2 s) bounds allowed progress-file age while moving.
+The helper cancels motion if acquisition stops, loses readiness, or ceases updating;
+controller timeouts/faults and parent interruption also stop motion. A mount helper
+failure propagates to acquisition on its next polling iteration. Controller stop
+commands cannot guarantee stopping after power/USB loss; keep the physical stop
+available during testing. Motion is always stopped before the mount connection closes.
 
-The baffle calibration is approximate and has not yet been checked with a fresh
-capture. Delays below 38 ns map to negative range and are excluded from range
-plots; the full raw histogram remains saved. Zero range is excluded from counts/R⁴
-because division by zero is undefined. At 8192 × 80 ps, the nominal positive-range
-window extends to about 92.55 m after subtracting the 38 ns offset. No pulse-period
-wrapping is applied by this linear calibration.
+All usual mount filenames and coordinate fields are preserved. `mount-settings.json`
+adds the motion settings; `mount-polarity.json` snapshots the selected polarity.
+`lidarmeasure.py` rejects motion configs, so normal acquisition cannot accidentally
+start motion. The preview and completed outputs behave exactly as in normal capture.
 
-Current bin-width update: all profiles use 160 ps (T3 binning code 1), retaining
-8192 bins. The stored histogram spans 1310.72 ns. At 1 MHz the plotted delay window
-remains one pulse period, 0–1000 ns, because a longer histogram does not extend the
-unambiguous range. Range-bin spacing is approximately 24 mm. The 38 ns baffle
-reference is retained; changing binning does not automatically recalibrate it.
+Range waterfall plotting also writes `histogram.csv`: range-bin bounds in meters, raw
+photon counts, and acquisition-relative interval bounds in seconds. It exports the
+selected histogram interval across all saved range bins, regardless of display limits
+or R⁴ coloring. Replotting replaces this export with the newly selected interval.
 
-## Current T2 setup
+Completed and gracefully stopped recordings save `clock.json` (also in
+`summary.json`) with the hardware measurement's Unix origin from `MH_GetStartTime`.
+It is read after acquisition, before device close, to avoid concurrent MHLib calls.
+`blocks/*.npz` retains `elapsed_s` relative to that origin; keep `clock.json` with
+those files. Unix event time is the saved integer seconds plus subsecond
+picoseconds / 1e12 plus `elapsed_s`. The full epoch in picoseconds is saved as a
+decimal string to avoid JSON/float precision loss. No per-event Unix float array
+is stored. Internal clocking inherits PC clock accuracy; it does not guarantee
+picosecond alignment or eliminate clock drift over long captures. Failed runs may
+lack the origin; older recordings cannot be retroactively anchored by this API.
 
-All profiles now use **T2**, 800 ps histogram bins, and 1200 bins (960 ns window),
-with expected SYNC at 1 MHz. The user's 3.5 ns optical pulse width is recorded in
-`experiment`; the software does not control it. This supersedes earlier T3 and
-160 ps configuration examples in this document.
+`lidarmove.py` stops acquisition after the final move, drains buffered events, saves
+and plots, then exits (including the preview server). It does not wait out a separate
+capture duration. Stop detection follows the acquisition polling cadence.
 
-Static capture and the vendor example set `sn.histogram.setBinWidth(800)` and
-`setNumBins(1200)` directly. Continuous capture reads unfolded T2 timestamps,
-associates each detector event with its preceding SYNC (including across block
-boundaries), and saves detector timestamps and measured delays. SYNC-only events
-are processed but not duplicated on disk. `input_records` in stream progress
-includes SYNC, while `records` and channel counts describe saved detector events.
-Events before the first observed SYNC are counted as `unreferenced_events` and
-excluded. Enable PTU if the complete original stream is needed.
+`lidarmove.py` also generates `motion.png` (waterfall, selected histogram, measured
+polar elevation/range samples, and az/el history) and `motion-alignment.csv`.
+It uses `clock.json` and mount query midpoints, without extrapolating outside mount
+coverage. Default interval comes from `plot.histogram_interval`. Replot with:
 
-The block poll interval is 100 ms to accommodate the additional 1 million SYNC
-events/second. Waterfall analysis builds the same 800 ps bins from the saved
-per-event delays; the static histogram is built by snAPI. T2's increased USB and
-processing load requires sustained hardware validation on our emulated runtime.
-The pulse-period ambiguity and baffle calibration are unchanged by switching modes.
+```bash
+/usr/bin/python3 -I plot_motion.py output/TIMESTAMP-measurement --start-seconds 18 --end-seconds 22 --color-max 10
+```
 
-Live T2 validation required a 12-million-record block capacity: snAPI delivered
-batches exceeding four million records despite a 100 ms polling request. Direct
-MHLib calls during the snAPI acquisition worker caused DEVICE_LOCKED errors and
-are no longer made. End-of-run validation checks hardware flags, acquisition
-metadata, and native logs for transient dropped-count or buffer-overrun warnings.
+`examples/collaborator-motion-plot.py` preserves the supplied reference logic and
+hardcoded paths, with Python indentation restored from the pasted Markdown. It
+includes the original artificial elevation ramp and independent time origins;
+use `plot_motion.py` for measured coordinates and recorded clock alignment.
+
+In `motion.png`, the waterfall, polar panel, and mount history show the full capture.
+Only the histogram uses the selected time interval.

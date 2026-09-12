@@ -5,14 +5,6 @@
   "expected_sync_rate_hz": 1000000,
   "sync_rate_tolerance_hz": 100000,
   "profiles": {
-    "capture": {
-      "mode": "T2",
-      "duration_ms": 1000,
-      "save_ptu": false,
-      "export_bins": 1200,
-      "num_bins": 1200,
-      "bin_width_ps": 800
-    },
     "vendor-demo": {
       "mode": "T2",
       "duration_ms": 1000,
@@ -21,9 +13,9 @@
       "num_bins": 1200,
       "export_bins": 1200
     },
-    "waterfall": {
+    "measurement": {
       "mode": "T2",
-      "duration_ms": 28800000,
+      "duration_ms": 120000,
       "window_ms": 100,
       "max_records": 12000000,
       "save_ptu": false,
@@ -31,7 +23,9 @@
       "min_free_disk_gb": 10,
       "preview_max_columns": 2000,
       "num_bins": 1200,
-      "bin_width_ps": 800
+      "bin_width_ps": 800,
+      "chunk_records": 1000000,
+      "chunk_seconds": 5
     }
   },
   "plot": {
@@ -46,11 +40,30 @@
     "y_transform": "counts_divided_by_range_fourth_power",
     "range_axis_min_m": 0,
     "range_axis_max_m": null,
-    "reference_description": "Baffle edge defines zero range; approximately 38 ns delay reported by user"
+    "reference_description": "Baffle edge defines zero range; approximately 38 ns delay reported by user",
+    "histogram_interval": {
+      "start_s": 0,
+      "duration_s": 1
+    },
+    "waterfall_range_max_m": 20
   },
   "output_dir": "output",
   "experiment": {
     "laser_pulse_width_ns": 3.5,
     "laser_pulse_width_source": "user setting; not controlled by snAPI"
+  },
+  "mount": {
+    "enabled": true,
+    "repo": "../astromount",
+    "baseline": "baseline-2026-09-11-1032.json",
+    "port": "/dev/serial/by-id/usb-ZWO_Systems_ZWO_Device_123456-if00",
+    "interval_s": 0.1,
+    "pitch_sign": 1,
+    "yaw_sign": -1
+  },
+  "preview": {
+    "enabled": true,
+    "port": 8765,
+    "refresh_ms": 500
   }
 }

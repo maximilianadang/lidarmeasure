@@ -11,4 +11,4 @@ export PYTHONPATH="$LIDAR_RUNTIME_DIR/package/snapi-1.1.2${PYTHONPATH:+:$PYTHONP
 cd "$repo_dir"
 export LIDAR_RUN_DIR="$(/usr/bin/python3 -I "$repo_dir/run_paths.py" "$@")"
 run_log="$LIDAR_RUN_DIR/logs/console.log"
-"$LIDAR_RUNTIME_DIR/qemu-current/usr/bin/qemu-x86_64" -cpu max   -L "$LIDAR_RUNTIME_DIR/runtime"   -E "LD_LIBRARY_PATH=$LIDAR_RUNTIME_DIR/libusb-local/lib:$LIDAR_RUNTIME_DIR/runtime/usr/lib/x86_64-linux-gnu:$LIDAR_RUNTIME_DIR/python/lib:$LIDAR_RUNTIME_DIR/package/snapi-1.1.2/snAPI"   "$LIDAR_RUNTIME_DIR/python/bin/python3" "$@" 2>&1 | tee "$run_log"
+"$LIDAR_RUNTIME_DIR/qemu-current/usr/bin/qemu-x86_64" -cpu max   -L "$LIDAR_RUNTIME_DIR/runtime"   -E "LD_LIBRARY_PATH=$LIDAR_RUNTIME_DIR/libusb-local/lib:$LIDAR_RUNTIME_DIR/runtime/usr/lib/x86_64-linux-gnu:$LIDAR_RUNTIME_DIR/python/lib:$LIDAR_RUNTIME_DIR/package/snapi-1.1.2/snAPI"   "$LIDAR_RUNTIME_DIR/python/bin/python3" -u "$@" 2>&1 | tee -i "$run_log" | /usr/bin/python3 -I -u "$repo_dir/console_status.py"
