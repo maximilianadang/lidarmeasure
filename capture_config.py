@@ -3,26 +3,55 @@ import argparse
 import configparser
 import json
 import math
+import sys
 from pathlib import Path
 from run_paths import read_settings
 
 ROOT = Path(__file__).resolve().parent
 
 
-def load_settings(profile_name, argv=None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--settings", type=Path, default=ROOT / "lidar-settings.json")
-    args = parser.parse_args(argv)
-    path = args.settings.resolve()
+def load_settings(profile_name, argv=None, moving=False):
+    bootstrap = argparse.ArgumentParser(add_help=False)
+    bootstrap.add_argument('--settings', type=Path, default=ROOT / ('motion-settings.json' if moving else 'lidar-settings.json'))
+    known, _ = bootstrap.parse_known_args(argv)
+    path = known.settings.resolve()
     settings = read_settings(path)
+    parser = argparse.ArgumentParser(parents=[bootstrap])
+    motion = settings.get('motion')
+    if motion:
+        sys.path.insert(0, str((ROOT / settings['mount']['repo']).resolve()))
+        from astromount_sequence import read_waypoints, add_arguments, controller_values, MOTION_FIELDS
+        from astromount_config import FRAME, motion_defaults
+        motion = settings['motion'] = {**motion_defaults(), **motion}
+        add_arguments(parser, path_required=not bool(motion.get('path')), defaults=motion,
+                      delta_help='Accumulate deltas from initial measured pointing and planned endpoints')
+    args = parser.parse_args(argv)
+    if motion:
+        if 'targets' in motion or 'speed_deg_s' in motion: raise ValueError('Use sweep CSV input for lidarmove')
+        csv_path = args.path.resolve() if args.path else (path.parent / motion['path']).resolve()
+        motion.update(path=str(csv_path), delta=args.delta, dry_run=args.dry_run, timeout_s=args.timeout,
+                      polarity=str(args.polarity.resolve()), csv_source=csv_path.read_text(),
+                      targets=[dict(azimuth=az, elevation=el, duration_s=duration)
+                               for az, el, duration in read_waypoints(csv_path)])
+        motion.update(controller_values(args))
+        motion['driver'] = 'sweep.py'
+        settings['mount'].update(port=args.port, baseline=str(args.baseline.resolve()),
+                                 pitch_sign=FRAME.pitch_sign, yaw_sign=FRAME.yaw_sign)
+        motion['sweep_argv'] = ['--path', str(csv_path), '--timeout', str(args.timeout), '--port', args.port,
+                                   '--baseline', str(args.baseline.resolve()), '--polarity', str(args.polarity.resolve())]
+        if args.delta: motion['sweep_argv'].append('--delta')
+        if args.dry_run: motion['sweep_argv'].append('--dry-run')
+        for key in MOTION_FIELDS:
+            motion['sweep_argv'].extend(['--' + key.replace('_', '-'), str(motion[key])])
     profile = settings["profiles"][profile_name]
     if settings.get('motion'):
         from mount_motion import validate_motion
         motion = settings['motion']
         validate_motion(motion)
         profile['duration_ms'] = max(profile.get('window_ms', 1), math.ceil(1000 * sum(
-            target.get('duration_s', 0) + motion['timeout_s'] for target in motion['targets'])))
+            target.get('duration_s', motion['timeout_s']) for target in motion['targets'])))
     streaming = 'window_ms' in profile
+    profile['raw_t2'] = streaming and profile['mode'] == 'T2'
     kind = profile.get('kind', 'range')
     limit = profile.get('preview_max_events', 10000)
     if type(limit) is not int or limit <= 0: raise ValueError('preview_max_events must be a positive integer')

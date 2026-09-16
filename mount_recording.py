@@ -1,5 +1,5 @@
 """Read-only native astromount sampling alongside the emulated lidar process."""
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import hashlib
 import json
 import math
@@ -34,17 +34,34 @@ def record_mount(settings, out):
                   timing='Host monotonic/UTC query brackets; not hardware-synchronized to photons')
     if settings.get('motion'):
         motion = dict(settings['motion'])
+        if 'csv_source' in motion: (out / 'motion.csv').write_text(motion.pop('csv_source'))
         polarity = (repo / motion.pop('polarity')).read_text()
         (out / 'mount-polarity.json').write_text(polarity)
         config['motion'] = dict(motion, positive_directions=json.loads(polarity)['positive_directions'])
     (out / 'mount-settings.json').write_text(json.dumps(config, indent=2)+'\n')
     command = [str(repo / '.venv/bin/python'), '-I', '-u', str(root / 'mount_recording.py'), str(out)]
-    with background(command, out / 'logs/mount.log', 'READY', graceful=True, process_handle=True) as process:
+    with ExitStack() as helpers:
+        try:
+            process = helpers.enter_context(background(command, out / 'logs/mount.log', 'READY', graceful=True, process_handle=True))
+        except (RuntimeError, OSError) as error:
+            status = dict(status='unavailable', error=str(error), motion_started=False)
+            (out / 'mount-status.json').write_text(json.dumps(status, indent=2)+'\n')
+            print(f'MOUNT unavailable: {error}; recording continues without motion', flush=True)
+            yield None
+            return
         print('MOUNT recording az/el to mount-coordinates.jsonl', flush=True)
         def check_health():
             if process.poll() is not None: raise RuntimeError('Mount helper exited during acquisition; see logs/mount.log')
             return (out / 'motion-complete').exists()
-        yield check_health
+        try:
+            yield check_health
+        finally:
+            # Acquisition owns only the start gate; explicit interruption still stops the experiment.
+            if sys.exc_info()[0] not in (KeyboardInterrupt, SystemExit) and (out / 'motion-started').exists():
+                if not (out / 'motion-complete').exists() and process.poll() is None:
+                    print('Acquisition ended; waiting for the independent mount sequence to finish', flush=True)
+                while not (out / 'motion-complete').exists() and process.poll() is None:
+                    time.sleep(.1)
 
 
 def sample(mount, reference, frame, previous): return read_sample(mount.joint_sample, reference, frame, previous)

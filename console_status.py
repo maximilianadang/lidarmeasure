@@ -33,6 +33,7 @@ def relay(source, destination, timer_destination=None):
     started = None
     duration = 0
     last_second = -1
+    open_ended = False
     while True:
         try:
             line = messages.get(timeout=0.1)
@@ -41,6 +42,7 @@ def relay(source, destination, timer_destination=None):
             clear_timer('\n')
             break
         if line:
+            if 'STARTING acquisition:' in line: open_ended = 'until motion completes' in line
             if VENDOR.search(line) and not (START.search(line) or STOP.search(line)): continue
             if timer_visible:
                 clear_timer()
@@ -48,19 +50,20 @@ def relay(source, destination, timer_destination=None):
             destination.write(line)
             match = START.search(line)
             if match:
-                duration = int(match.group(1)) / 1000
+                duration = float('inf') if open_ended else int(match.group(1)) / 1000
+                duration_label = 'motion completion' if open_ended else f'{duration:g} s'
                 started = time.monotonic()
                 last_second = -1
                 destination.write(
                     "\n\033[0m" + "=" * 68 + "\n"
                     "                 MEASUREMENT START NOW\n"
-                    f"                 Duration: {duration:g} seconds\n"
+                    f"                 Duration: {'until motion completes' if open_ended else f'{duration:g} seconds'}\n"
                     "                 Timer follows receipt of MH_StartMeas\n"
                     + "=" * 68 + "\n\n"
                 )
             elif STOP.search(line) and started is not None:
                 elapsed = min(time.monotonic() - started, duration)
-                destination.write(f'MEASUREMENT TIMER STOPPED: {elapsed:.1f} / {duration:g} s\n')
+                destination.write(f"MEASUREMENT TIMER STOPPED: {elapsed:.1f} / {duration_label}\n")
                 started = None
         if started is not None:
             elapsed = min(time.monotonic() - started, duration)
@@ -68,11 +71,11 @@ def relay(source, destination, timer_destination=None):
             if second != last_second or elapsed >= duration:
                 if inline:
                     destination.flush()
-                    timer_destination.write(f'\r\033[2K>>> MEASUREMENT: {elapsed:.1f} / {duration:g} s elapsed <<<')
+                    timer_destination.write(f'\r\033[2K>>> MEASUREMENT: {elapsed:.1f} / {duration_label} elapsed <<<')
                     timer_destination.flush()
                     timer_visible = True
                 else:
-                    destination.write(f'>>> MEASUREMENT: {elapsed:.1f} / {duration:g} s elapsed <<<\n')
+                    destination.write(f'>>> MEASUREMENT: {elapsed:.1f} / {duration_label} elapsed <<<\n')
                 last_second = second
             if elapsed >= duration:
                 clear_timer('\n')

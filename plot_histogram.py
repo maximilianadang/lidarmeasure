@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from plotting import mark_incomplete
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -50,6 +51,7 @@ def plot_capture(directory):
                 ax.legend()
         ax.set_ylim(bottom=0)
         ax.grid(alpha=.2)
+        mark_incomplete(fig, directory)
         fig.savefig(directory / name, dpi=180)
         plt.close(fig)
     print('PLOTS', directory, flush=True)

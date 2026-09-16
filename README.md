@@ -8,7 +8,7 @@ with bounded RAM, chunked disk writes, and a browser preview over SSH.
 Connect from your computer with port forwarding:
 
 ```bash
-ssh -L 8765:127.0.0.1:8765 dusty@ORIN_HOST
+ssh -L 8766:127.0.0.1:8766 dusty@ORIN_HOST
 ```
 
 On the Orin:
@@ -18,7 +18,7 @@ cd ~/workspace/terraforming_mars/lidarmeasure
 ./run-python lidarmeasure.py
 ```
 
-Open http://localhost:8765 in your computer's browser. The command starts the
+Open http://localhost:8766 in your computer's browser. The command starts the
 preview for its own run folder before opening the lidar. After recording and
 plotting finish, the preview remains open until Ctrl+C. Refresh for a new run.
 During acquisition, Ctrl+C requests a stop and final drain; SIGKILL cannot drain.
@@ -37,7 +37,7 @@ During acquisition, Ctrl+C requests a stop and final drain; SIGKILL cannot drain
 - `save_ptu`: optionally retain the vendor PTU stream; normally false.
 - `plot`: channel, calibration, delay/range bounds, and selected histogram interval.
 - `mount`: enable sampling, sibling repository, port, baseline, signs, and sample period.
-- `preview`: enable webpage, loopback port (8765), refresh period (500 ms).
+- `preview`: enable webpage, loopback port (8766), refresh period (500 ms).
 - `system_ini`, `device_ini`: vendor paths/logging and hardware input settings.
 
 Laser repetition rate is set externally; `expected_sync_rate_hz` checks it.
@@ -59,9 +59,12 @@ original stream. Delay ambiguity cannot be removed by changing the plot axis.
 
 snAPI allocates about 216 MB in double buffers, plus processing/runtime overhead.
 The detector chunk buffer adds 17 MB; the overview is bounded by its column cap.
-Writes occur on size/time limits and at final drain. Time limits are checked when
-control returns from snAPI, not hard deadlines. An abrupt failure may lose the
-uncommitted chunk. `blocks`, `batches`, `records`, and `committed_records` distinguish
+Decoded writes occur on size/time limits and at final drain. Raw batches are saved
+first in `raw-batches/`; a native worker processes them independently. Durable
+checkpoints allow it to remove processed raw files without keeping duplicate data
+for the whole run. A backlog occupies disk, not an expanding RAM queue. Disk reserve
+checks still apply. After a processing failure, pending raw files and the decoder
+checkpoint remain available. `blocks`, `batches`, `records`, and `committed_records` distinguish
 disk chunks, API deliveries, received detector events, and committed detector events.
 Completed chunks remain readable; failed writes are reported.
 
@@ -72,7 +75,7 @@ the histogram uses `plot.histogram_interval.start_s` and `duration_s`.
 Custom intervals or changed settings rebin saved events using the same code.
 Older `decoded-events.npz` and waterfall-profile recordings remain readable.
 
-`preview.json` is one atomically replaced latest-batch histogram, independent of
+`preview.json` is one atomically replaced latest-processed-batch histogram, independent of
 disk chunking. The browser has one request in flight and retains no batch history.
 Closing it does not affect recording. Preview errors do not erase recorded events.
 
@@ -152,32 +155,26 @@ saves the fully resolved configuration. Circular inheritance is rejected.
 ./run-python lidarmove.py --settings motion-settings.json
 ```
 
-This commands physical motion. Edit `motion.targets` for ordered az/el points;
-each is reached and settled before the next. For nominal travel time, add
-`duration_s` to a target, e.g. `{ "azimuth": 0, "elevation": 6, "duration_s": 60 }`.
-This reuses astromount's duration calculation used by `point.py` and `sequence.py`:
-maximum joint displacement divided by duration, capped at 3°/s. Choose either `duration_s` on every target or one `motion.speed_deg_s` with no
-target durations. Both or neither raises an error before hardware initialization,
-with a minimal configuration fix.
-Arrival is not guaranteed at exactly the requested time. `timeout_s` is the arrival
-timeout for speed-based moves, or extra time after the nominal duration for timed
-moves. For `lidarmove`, recording ends when the last target settles; inherited capture
-duration is ignored. The saved duration is a derived summary-sizing budget from
-the moves and their timeouts, not a recording timer. `polarity` selects the astromount polarity file.
-Baseline and direction calibration must still be valid.
+This commands physical motion using astromount's `sweep.py` behavior and shared CLI.
+CSV durations schedule continuous az/el segments with no intermediate settling.
+Only the final target settles; `--timeout` allows extra time for final arrival.
+Acquisition starts first, motion waits for a valid batch, and recording continues
+until the last target settles. There is no separate lidar cutoff. The sum of CSV
+durations is only the planned motion duration (and overview sizing estimate);
+settling and startup can make the actual recording longer.
 
 The same acquisition lifecycle and native mount helper are used. One mount
 connection both logs the existing coordinate schema and runs astromount's
-`Controller.run_pointing(..., cancel=...)`. Motion waits for a valid detector batch
+`astromount_trajectory.sweep(..., cancel=...)`. Motion waits for a valid detector batch
 while acquisition reports running. With no such batch, it never starts. In range
 mode a valid batch requires a pulse-relative return; background mode uses detector
 events without SYNC. This is software coordination, not a shared hardware trigger.
 
-`acquisition_timeout_s` (2 s) bounds allowed progress-file age while moving.
-The helper cancels motion if acquisition stops, loses readiness, or ceases updating;
-controller timeouts/faults and parent interruption also stop motion. A mount helper
-failure propagates to acquisition on its next polling iteration. Controller stop
-commands cannot guarantee stopping after power/USB loss; keep the physical stop
+After the initial valid batch, lidar progress age and missing/delayed batches do
+not cancel mount motion. Astromount's arrival/progress timeouts, feedback and
+workspace checks remain active. Acquisition errors do not cancel a sequence that has started: cleanup waits for
+its completion or an astromount fault. Explicit Ctrl+C still requests a mount stop. A mount helper failure propagates to acquisition
+on its next polling iteration. Stop commands cannot guarantee stopping after power/USB loss; keep the physical stop
 available during testing. Motion is always stopped before the mount connection closes.
 
 All usual mount filenames and coordinate fields are preserved. `mount-settings.json`
@@ -201,8 +198,8 @@ is stored. Internal clocking inherits PC clock accuracy; it does not guarantee
 picosecond alignment or eliminate clock drift over long captures. Failed runs may
 lack the origin; older recordings cannot be retroactively anchored by this API.
 
-`lidarmove.py` stops acquisition after the final move, drains buffered events, saves
-and plots, then exits (including the preview server). It does not wait out a separate
+`lidarmove.py` stops acquisition at final move completion, drains buffered events, saves
+and plots, then exits (including the preview server). It has no separately configured
 capture duration. Stop detection follows the acquisition polling cadence.
 
 `lidarmove.py` also generates `motion.png` (waterfall, selected histogram, measured
@@ -214,10 +211,107 @@ coverage. Default interval comes from `plot.histogram_interval`. Replot with:
 /usr/bin/python3 -I plot_motion.py output/TIMESTAMP-measurement --start-seconds 18 --end-seconds 22 --color-max 10
 ```
 
-`examples/collaborator-motion-plot.py` preserves the supplied reference logic and
+`examples/motion-plot.py` preserves the supplied reference logic and
 hardcoded paths, with Python indentation restored from the pasted Markdown. It
 includes the original artificial elevation ramp and independent time origins;
 use `plot_motion.py` for measured coordinates and recorded clock alignment.
 
 In `motion.png`, the waterfall, polar panel, and mount history show the full capture.
 Only the histogram uses the selected time interval.
+
+
+The default motion configuration reads `motion.csv`, using the same shared CSV
+loader as astromount's `sweep.py`. Columns are `az,el,duration` (degrees,
+degrees, seconds); angles are absolute baseline-relative coordinates. Set
+`motion.path` relative to the configuration file or override it with:
+
+```bash
+./run-python lidarmove.py --settings motion-settings.json --path motion.csv
+```
+
+The run saves `motion.csv`, the resolved targets, and native sweep telemetry in `logs/sweep.jsonl`.
+
+All motion entrypoints, including standalone astromount `point.py`, `sequence.py`, and `sweep.py`,
+use `astromount/motion-settings.json` via astromount's shared loader. This repository's
+`motion-settings.json` only selects LiDAR acquisition settings and the CSV path;
+it does not duplicate controller defaults. Custom LiDAR profiles may explicitly
+override motion values; CLI overrides take precedence. Controller limits live
+under `motion` in astromount's file: `deadband` is
+0.01° (`--deadband` overrides it). Software excursion limits and stopping margins
+have been removed, including the former ±22.5° kinematic cap. IK still selects
+the front-facing branch and rejects singular/rear-facing targets. Operation
+requires visual supervision and an accessible E-stop; there is no software
+collision or travel envelope. Firmware/mechanical restrictions are unchanged.
+Resolved values are passed to both dry-run validation and the live controller,
+and saved in run settings. Invalid combinations fail the controller's existing
+validation; they are never silently clamped. Gain (`kp`), default rate (`max_speed`),
+speed ceiling (`speed_limit`), loop period (`period`), sample age (`max_sample_age`),
+arrival/progress timeouts (`timeout`, `progress_timeout`), settling (`settle_samples`),
+and streaming-worker `heartbeat` are defined here too. Times are seconds and angles
+are degrees. CLI options use hyphens, e.g. `--progress-timeout`; `--speed` on point.py
+overrides the default rate. The physical command ceiling remains at most 3°/s.
+
+CSV input cannot be combined
+with inline targets or speed. The CSV argument definitions and continuous sweep implementation are shared with astromount.
+Lidar lifecycle remains owned by `lidarmove`. `--delta` accumulates each row from the initial measured pointing and previous planned endpoint, exactly as `sweep.py` does.
+
+`lidarmove` accepts the same sweep options directly, with no `--` separator:
+
+```bash
+./run-python lidarmove.py --path motion.csv
+./run-python lidarmove.py --path motion.csv --delta
+```
+
+`--timeout`, `--port`, `--baseline`, `--polarity`, and `--dry-run` also use the
+shared CSV parser. Mount defaults (including frame signs) come from
+astromount/config.json. CLI path overrides are relative to the working directory;
+`motion.path` is relative to its settings file. `--settings` selects lidar settings.
+`--dry-run` delegates to sweep.py without opening either device; like sweep.py,
+it rejects `--delta` because relative validation needs a live position.
+Resolved sweep arguments and mount settings are saved with every acquisition.
+Motion completion stops recording; there is no lidar duration cap. Astromount faults and explicit user interruption still stop the experiment.
+
+After device cleanup, plotting is attempted for saved data even when acquisition
+fails. Failed-run plots are visibly marked incomplete; the original failure remains
+in `summary.json`. Each plotting error is recorded separately so it cannot hide an
+acquisition error or prevent another plot from being attempted. Without a saved
+clock origin, only the clock-aligned motion plot is skipped. Runs that saved no
+measurement data have nothing to plot.
+
+High-rate acquisition uses snAPI Raw T2 for MultiHarp devices. The emulated Unfold
+path is bypassed. Acquisition atomically saves each returned batch to `raw-batches/`
+and immediately resumes polling; it never waits for decoding, histogramming, or
+preview rendering. One native ARM worker reads saved batches in order, writes the
+existing detector-event NPZ schema, and updates the preview. Only finalization,
+after acquisition stops, waits for processing to catch up. Worker failure does not
+stop raw recording; it is reported at finalization and the raw backlog is retained.
+
+`raw_batches_saved` and `processing_pending_batches` distinguish recording progress
+from processing progress. The console reports both. A processing backlog can delay
+the preview, but cannot create an unbounded in-memory queue. Disk write latency and
+snAPI/hardware throughput still limit acquisition; this is not a guarantee against
+all overruns. Raw files are removed only after decoded chunks and a decoder
+checkpoint have been committed. Successful finalization removes the spool directory.
+The raw decoder follows PicoQuant's MultiHarp/Generic T2 V2 format:
+https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py
+
+Above one million detector events/s (initial or observed), full histogram summaries
+are deferred to native postprocessing so they do not compete with recording.
+Default postprocessing caches the summary for subsequent plots. Raw records read
+are checked against snAPI's final record total. Buffer-overrun log entries stop the
+recording as incomplete and still trigger salvage plotting. This does not cancel
+an already-started mount sequence. Stage timing maxima/totals are saved in
+`stream-progress.json`; native worker diagnostics are in `logs/processing.log`.
+
+The earlier five-second hardware test passed, but a subsequent motion run overflowed
+at about 7.2 seconds: synchronous decoding delayed a read by 3.38 seconds. That
+result motivated the disk-backed handoff above; it is not validation of this new
+implementation. Tests cover a stopped processing worker, worker crashes, checkpoint
+recovery across SYNC boundaries, and the final acquisition drain. Hardware endurance
+validation is still required.
+
+If the mount helper cannot start (including an out-of-workspace current position),
+recording continues without motion for the sum of the CSV waypoint durations.
+The reason is saved in `mount-status.json` and `summary.json`; range/count plots
+are still generated, and the motion plot is skipped. Mount travel limits remain
+enforced. Once a helper starts successfully, normal motion-completion timing applies.

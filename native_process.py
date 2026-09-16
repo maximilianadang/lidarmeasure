@@ -19,7 +19,10 @@ def background(command, log_path, ready, *, graceful=False, process_handle=False
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
                 message = process.stdout.readline().strip() if selector.select(15) else ''
-            if not message.startswith(ready): raise RuntimeError(f'Helper failed to start; see {log_path}')
+            if not message.startswith(ready):
+                log.flush()
+                detail = log_path.read_text().strip().splitlines()
+                raise RuntimeError(f'Helper failed to start: {detail[-1] if detail else "no readiness response"}; see {log_path}')
             yield process if process_handle else message
         except BaseException:
             failed = True

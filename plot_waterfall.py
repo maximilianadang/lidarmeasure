@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from plotting import mark_incomplete
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -33,6 +34,7 @@ def plot_capture(directory, start_s=None, end_s=None, raw_counts=True, color_max
         ax.stairs(counts, time_edges)
         ax.set(xlabel='Acquisition time (s)', ylabel='Photon counts per window',
                title=f'CH{config["channel"]} background counts — {effective_window:g} ms windows', ylim=(0, None))
+        mark_incomplete(fig, directory)
         fig.savefig(directory / 'background.png', dpi=180)
         plt.close(fig)
         print('PLOT', (directory / 'background.png').resolve(), flush=True)
@@ -76,6 +78,7 @@ def plot_capture(directory, start_s=None, end_s=None, raw_counts=True, color_max
                 title=f'CH{config["channel"]} histogram: {start_s:g}–{end_s:g} s\n'
                       f'{end_s-start_s:g} s integration', xlim=(lower, upper), ylim=(0, None))
     hist_ax.grid(alpha=.2)
+    mark_incomplete(fig, directory)
     fig.savefig(directory / f'{stem}.png', dpi=180)
     plt.close(fig)
     metadata = dict(color_max_requested=color_max, color_limits=list(mesh.get_clim()),

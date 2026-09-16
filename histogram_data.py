@@ -17,16 +17,24 @@ def histogram_grid(profile, config):
     return time_edges, range_edges[positive[0]:]
 
 
+def uniform_bin_indices(values, edges):
+    """Uniform bins with an optional shorter final bin; preserve exact edge semantics."""
+    index = np.clip(np.floor((values - edges[0]) / (edges[1] - edges[0])), 0, len(edges)-2).astype(np.int64)
+    index += values >= edges[index+1]
+    index -= values < edges[index]
+    return index
+
+
 def bin_events(times, delays, channels, config, time_edges, range_edges, counts, histogram, interval):
     """Accumulate both panels from the same events, using exclusive end bounds."""
     selected = (channels == config['channel']) & (times >= 0) & (times < time_edges[-1])
     times, ranges = times[selected], to_range(delays[selected], config)
-    ti = np.searchsorted(time_edges, times, side='right') - 1
-    ri = np.searchsorted(range_edges, ranges, side='right') - 1
+    ti = uniform_bin_indices(times, time_edges)
+    ri = uniform_bin_indices(ranges, range_edges)
     valid = (ri >= 0) & (ri < counts.shape[1])
-    np.add.at(counts, (ti[valid], ri[valid]), 1)
+    counts += np.bincount(ti[valid] * counts.shape[1] + ri[valid], minlength=counts.size).reshape(counts.shape).astype(np.uint64)
     within = valid & (times >= interval[0]) & (times < interval[1])
-    np.add.at(histogram, ri[within], 1)
+    histogram += np.bincount(ri[within], minlength=len(histogram)).astype(np.uint64)
     return int(selected.sum())
 
 
@@ -52,6 +60,9 @@ def capture_histograms(directory, profile, config, start_s=None, end_s=None):
     summary = Summary(dict(profile, duration_ms=duration * 1000), dict(config, histogram_interval=selection))
     for path in paths:
         with np.load(path) as events: summary.add(events['elapsed_s'], events.get('delay_ps'), events['channels'])
+    if start_s is None and end_s is None:
+        summary.profile, summary.config = profile, config
+        summary.save(directory, duration)
     return summary.te, summary.re, summary.counts, summary.histogram, summary.total, summary.window, summary.interval
 
 

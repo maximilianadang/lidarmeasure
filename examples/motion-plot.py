@@ -45,7 +45,7 @@ def lin_interp(X_in, X_ref, Y_ref):
 
 #===
 
-with np.load('/home/akling/Data/jetson/waterfall.npz') as data:
+with np.load('/home/dusty/workspace/terraforming_mars/lidarmeasure/output/20260916T205232014698Z-measurement/waterfall.npz') as data:
     t= data['time_edges_s']
     C=data['counts']
     dx_range=data['range_edges_m'][1]-data['range_edges_m'][0]
@@ -54,16 +54,16 @@ DX=np.arange(0,C.shape[-1])*dx_range
 
 # Load the JSONL file into a DataFrame
 
-df = pd.read_json('/home/akling/Data/jetson/mount-coordinates.jsonl', lines=True)
+df = pd.read_json('/home/dusty/workspace/terraforming_mars/lidarmeasure/output/20260916T205232014698Z-measurement/mount-coordinates.jsonl', lines=True)
 
 # Convert the DataFrame (or specific columns) to a NumPy array
 
 t_mount = df['started_unix_s'].values-df['started_unix_s'][0]
 azi=lin_interp(t,t_mount,df['azimuth_deg'].values)
-elev=lin_interp(t,t_mount,df['elevation_deg'].values)+np.arange(0,len(t))/len(t)*90
+elev=lin_interp(t,t_mount,df['elevation_deg'].values)
 
-t_start= 18
-t_end= 22
+t_start= 13
+t_end= 16
 its= np.argmin(np.abs(t-t_start))
 ite= np.argmin(np.abs(t-t_end))
 if its==ite:ite+=1
@@ -75,7 +75,7 @@ plt.figure(figsize=(18,6))
 gs = gridspec.GridSpec(2,3,width_ratios=[2,1,1], height_ratios=[1 ,1])
 
 ax=plt.subplot(gs[:,0])
-plt.pcolormesh(t[0:-1],DX,C.T, cmap='inferno',vmax=10)
+plt.pcolormesh(t[0:-1],DX,C.T, cmap='inferno',vmin=390,vmax=500)
 plt.colorbar()
 plt.plot([t[its],t[its]],[0,20],':w',lw=0.5)
 plt.plot([t[ite],t[ite]],[0,20],':w',lw=0.5)

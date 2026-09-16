@@ -33,7 +33,7 @@ def prepare(arguments):
     script = Path(arguments[0]).name if arguments else 'python'
     kind = {'lidarmeasure.py': 'measurement', 'lidarmove.py': 'measurement',
             'histogram-simple.py': 'vendor-demo', 'probe.py': 'probe'}.get(script, 'python')
-    config = ROOT / 'lidar-settings.json'
+    config = ROOT / ('motion-settings.json' if script == 'lidarmove.py' else 'lidar-settings.json')
     for i, arg in enumerate(arguments):
         if arg == '--settings': config = Path(arguments[i+1]).resolve()
         elif arg.startswith('--settings='): config = Path(arg.split('=', 1)[1]).resolve()

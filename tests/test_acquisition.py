@@ -9,6 +9,14 @@ from capture_config import load_settings
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_motion_dry_run_delegates_to_sweep_without_hardware(self):
+        settings, profile = load_settings('measurement', ['--dry-run'], moving=True)
+        with patch('acquisition.load_settings', return_value=(settings, profile)), patch('subprocess.run') as run, patch('acquisition.device_session') as device:
+            acquisition.run('measurement', moving=True)
+        self.assertEqual(Path(run.call_args.args[0][1]).name, 'sweep.py')
+        self.assertEqual(run.call_args.args[0][2:], settings['motion']['sweep_argv'])
+        device.assert_not_called()
+
     def test_close_even_when_stop_fails(self):
         sn = Mock()
         sn.histogram.stopMeasure.side_effect = RuntimeError('stop failed')
@@ -47,6 +55,32 @@ class LifecycleTests(unittest.TestCase):
             with patch('acquisition.ROOT', root), patch('acquisition.load_settings', return_value=(settings, profile)), patch('acquisition.snapshot_settings', snapshot), patch('acquisition.device_session', session), patch('acquisition.histogram', capture), patch('acquisition.check_rates'), patch('acquisition.check_acquisition', return_value={}), patch('acquisition.measurement_clock', return_value={'source': 'test'}), patch('acquisition.generate_plots', side_effect=RuntimeError('plot failed')), patch.dict('os.environ', LIDAR_RUNTIME_DIR='/tmp'), patch('acquisition.time.sleep'):
                 with self.assertRaisesRegex(RuntimeError, 'plot failed'):
                     acquisition.run('capture')
+            out = next((root/'output').iterdir())
+            self.assertEqual(json.loads((out/'summary.json').read_text())['status'], 'failed')
+            self.assertTrue((out/'histogram.npz').exists())
+            self.assertFalse((root/'output'/'latest-measurement.txt').exists())
+
+    def test_acquisition_failure_still_plots_and_preserves_original_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = dict(settings_source='test.json')
+            profile = dict(duration_ms=1, mode='T3')
+            sn = Mock(deviceConfig={})
+            sn.getCountRates.return_value.tolist.return_value = [10000000]
+            def snapshot(settings, out):
+                for name in ('lidar-settings.json', 'device.ini', 'system.ini', 'system-source.ini'):
+                    (out/name).write_text('{}')
+            from contextlib import contextmanager
+            @contextmanager
+            def session(*args):
+                yield sn, Mock()
+            def capture(sn, measurement, settings, profile, out, rates):
+                (out/'histogram.npz').write_bytes(b'raw data')
+                raise RuntimeError('mount cancelled')
+            with patch('acquisition.ROOT', root), patch('acquisition.load_settings', return_value=(settings, profile)), patch('acquisition.snapshot_settings', snapshot), patch('acquisition.device_session', session), patch('acquisition.histogram', capture), patch('acquisition.check_rates'), patch('acquisition.check_acquisition', return_value={}), patch('acquisition.measurement_clock', return_value={'source': 'test'}), patch('acquisition.generate_plots') as plot, patch.dict('os.environ', LIDAR_RUNTIME_DIR='/tmp'), patch('acquisition.time.sleep'):
+                with self.assertRaisesRegex(RuntimeError, 'mount cancelled'):
+                    acquisition.run('capture')
+            plot.assert_called_once()
             out = next((root/'output').iterdir())
             self.assertEqual(json.loads((out/'summary.json').read_text())['status'], 'failed')
             self.assertTrue((out/'histogram.npz').exists())

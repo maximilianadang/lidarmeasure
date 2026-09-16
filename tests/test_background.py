@@ -13,7 +13,7 @@ class BackgroundTests(unittest.TestCase):
     def test_no_sync_keeps_events_and_writes_time_histogram(self):
         settings, profile = load_settings('measurement', ['--settings', 'background-settings.json'])
         self.assertEqual(profile['kind'], 'background')
-        profile.update(duration_ms=1000, window_ms=100, chunk_records=2)
+        profile.update(duration_ms=1000, window_ms=100, chunk_records=2, raw_t2=False)  # Mock supplies unfolded arrays.
         measurement = Mock()
         measurement.isFinished.side_effect = [False, True]
         measurement.getBlock.side_effect = [(np.array([100000000000, 200000000000]), np.array([1, 1])),

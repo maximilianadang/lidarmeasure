@@ -35,6 +35,17 @@ class StreamingTests(unittest.TestCase):
             self.assertEqual(total,3)
             self.assertFalse(list((out/'blocks').glob('*.tmp')))
 
+    def test_native_spool_final_drain_includes_all_async_counters(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp); (out/'logs').mkdir()
+            with patch.dict('os.environ', {'LIDAR_RUNTIME_DIR': 'test'}), patch('stream_capture.shutil.disk_usage', return_value=Mock(free=10**12)):
+                result = stream_events(Mock(deviceConfig={'Resolution':80}), self.measurement(), {}, self.profile(), out, [10000000,1])
+            self.assertEqual(result['records'], 3)
+            self.assertEqual(result['stream']['committed_records'], 3)
+            self.assertEqual(result['stream']['raw_batches_saved'], 2)
+            self.assertEqual(result['stream']['processing_pending_batches'], 0)
+            self.assertFalse((out/'raw-batches').exists())
+
     def test_disk_reserve_stops_and_preserves_committed_blocks(self):
         with tempfile.TemporaryDirectory() as tmp:
             out=Path(tmp);m=self.measurement()
@@ -58,13 +69,38 @@ class StreamingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp); m = self.measurement()
             with patch('stream_capture.time.sleep'), patch('stream_capture.shutil.disk_usage', return_value=Mock(free=10**12)):
-                result = stream_events(Mock(deviceConfig={'Resolution': 80}), m, {'motion': True},
+                result = stream_events(Mock(deviceConfig={'Resolution': 80}), m, {'motion': {'targets': [{}], 'speed_deg_s': .1}},
                                        self.profile(), out, [10000000, 1], check_health=Mock(side_effect=[False, True]))
             self.assertEqual(m.startBlock.call_args.kwargs['acqTime'], 0)
             m.stopMeasure.assert_called_once()
             self.assertTrue(result['motion_complete'])
             self.assertEqual(result['records'], 3)
             self.assertEqual(result['stream']['stop_reason'], 'motion_complete')
+
+    def test_unavailable_mount_records_for_csv_duration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self.measurement(); p = dict(self.profile(), duration_ms=20000)
+            with patch('stream_capture.time.sleep'), patch('stream_capture.shutil.disk_usage', return_value=Mock(free=10**12)):
+                result = stream_events(Mock(deviceConfig={'Resolution':80}), m,
+                                       {'motion': {'targets': [{'duration_s':20}]}}, p, Path(tmp), [10000000,1])
+            self.assertEqual(m.startBlock.call_args.kwargs['acqTime'], 20000)
+            self.assertEqual(result['records'], 3)
+            self.assertFalse(result['motion_complete'])
+            self.assertEqual(result['stream']['stop_reason'], 'duration')
+
+    def test_timed_motion_continues_past_nominal_duration_until_mount_finishes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self.measurement(); p = dict(self.profile(), duration_ms=60000)
+            m.nSync_T3.side_effect = lambda x: x * 400000000
+            settings = {'motion': {'targets': [{'duration_s': 30}, {'duration_s': 30}]}}
+            with patch('stream_capture.time.sleep'), patch('stream_capture.shutil.disk_usage', return_value=Mock(free=10**12)):
+                result = stream_events(Mock(deviceConfig={'Resolution': 80}), m, settings, p, Path(tmp), [10000000, 1],
+                                       check_health=Mock(side_effect=[False, True]))
+            self.assertEqual(m.startBlock.call_args.kwargs['acqTime'], 0)
+            m.stopMeasure.assert_called_once()
+            self.assertEqual(result['stream']['stop_reason'], 'motion_complete')
+            self.assertGreater(result['stream']['elapsed_s'], 60)
+            self.assertEqual(result['records'], 3)
 
 class T2DecoderTests(unittest.TestCase):
     def test_sync_reference_survives_block_boundaries(self):

@@ -3,6 +3,7 @@ from contextlib import contextmanager, ExitStack
 import ctypes as ct
 from datetime import datetime, timezone
 import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -32,7 +33,9 @@ def device_session(settings, profile, out):
     measurement = None
     try:
         configure(sn, settings, profile, out)
-        measurement = sn.unfold if 'window_ms' in profile else sn.histogram
+        if profile.get('raw_t2') and not sn.deviceConfig.get('Model', '').startswith('MultiHarp'):
+            raise ValueError('Native raw-T2 decoder requires a MultiHarp device')
+        measurement = (sn.raw if profile.get('raw_t2') else sn.unfold) if 'window_ms' in profile else sn.histogram
         yield sn, measurement
     finally:
         try:
@@ -96,13 +99,23 @@ def histogram(sn, measurement, settings, profile, out, rates):
 
 
 def run(profile_name, moving=False):
-    settings, profile = load_settings(profile_name)
+    settings, profile = load_settings(profile_name, moving=moving)
     if bool(settings.get('motion')) != moving:
         raise ValueError('Use lidarmove.py with a motion configuration; lidarmeasure.py does not command motion')
+    if moving and settings['motion'].get('dry_run'):
+        import subprocess
+        from native_process import native_env
+        repo = (ROOT / settings['mount']['repo']).resolve()
+        subprocess.run([str(repo / '.venv/bin/python'), str(repo / 'sweep.py'),
+                        *settings['motion']['sweep_argv']], env=native_env(), check=True)
+        return
     if moving:
         from mount_motion import validate_motion
         validate_motion(settings['motion'])
     if moving and 'window_ms' not in profile: raise ValueError('Motion requires streaming acquisition')
+    if not os.environ.get('LIDAR_RUNTIME_DIR'):
+        script = 'lidarmove.py' if moving else 'lidarmeasure.py'
+        raise RuntimeError(f'Acquisition requires the snAPI runtime. Run ./run-python {script} with the same arguments instead of python3.')
     output = Path(settings.get('output_dir', ROOT / 'output'))
     out = Path(os.environ['LIDAR_RUN_DIR']) if os.environ.get('LIDAR_RUN_DIR') else create_run(output, profile_name)
     snapshot_settings(settings, out)
@@ -138,6 +151,8 @@ def run(profile_name, moving=False):
                 write_json(out / 'clock.json', clock)
                 summary['clock'] = clock
                 summary.update(check_acquisition(sn, profile['mode'], summary.get('stop_requested', False)))
+                if profile.get('raw_t2') and summary['stream']['input_records'] != summary['measurement_description']['NumRecs']:
+                    raise RuntimeError('Raw record total differs from snAPI count; saved recording is incomplete')
             # Vendor warnings may be transient and absent from final flags. Logs are flushed on close.
             warnings = []
             for log in (out / 'snapi').rglob('*.log'):
@@ -147,18 +162,35 @@ def run(profile_name, moving=False):
             if warnings:
                 summary['data_integrity_warnings'] = list(dict.fromkeys(warnings))
                 raise RuntimeError('Native log reports dropped counts or buffer exhaustion; saved data is suspect')
-            summary['status'] = 'plotting'
-            write_json(out / 'summary.json', summary)
-            print('PLOTTING saved acquisition', flush=True)
-            generate_plots(out, script='plot_waterfall.py' if 'window_ms' in profile else 'plot_histogram.py')
-            if moving: generate_plots(out, script='plot_motion.py')
             summary['status'] = 'stopped' if summary.get('stop_requested') and not summary.get('motion_complete') else 'complete'
         except BaseException as error:
             summary.update(status='failed', error=f'{type(error).__name__}: {error}')
             raise
         finally:
+            if (out / 'mount-status.json').exists():
+                summary['mount'] = json.loads((out / 'mount-status.json').read_text())
             summary['finished_utc'] = datetime.now(timezone.utc).isoformat()
             write_json(out / 'summary.json', summary)
+            scripts = []
+            if any((out / 'blocks').glob('*.npz')): scripts.append('plot_waterfall.py')
+            elif (out / 'histogram.npz').exists(): scripts.append('plot_histogram.py')
+            if moving and scripts:
+                if summary.get('mount', {}).get('status') != 'unavailable' and (out / 'clock.json').exists() and (out / 'mount-coordinates.jsonl').exists(): scripts.append('plot_motion.py')
+                else: summary['motion_plot_skipped'] = 'Mount unavailable or missing clock/coordinates; range/count plots still generated'
+            plot_errors = {}
+            for script in scripts:
+                try:
+                    print(f'PLOTTING saved acquisition: {script}', flush=True)
+                    generate_plots(out, script=script)
+                except Exception as error:
+                    plot_errors[script] = str(error)
+                    print(f'PLOT ERROR {script}: {error}', flush=True)
+            if plot_errors: summary['plot_errors'] = plot_errors
+            failed = summary['status'] == 'failed'
+            if plot_errors and not failed:
+                summary.update(status='failed', error='Plotting failed: ' + str(plot_errors))
+            write_json(out / 'summary.json', summary)
+            if plot_errors and not failed: raise RuntimeError(summary['error'])
         pointer = {'measurement': 'latest-measurement.txt', 'capture': 'latest-measurement.txt', 'waterfall': 'latest-waterfall.txt',
                    'vendor-demo': 'latest-vendor-demo.txt'}[profile_name]
         (output / pointer).write_text(str(out))

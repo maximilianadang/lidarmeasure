@@ -6,9 +6,7 @@ import signal
 import time
 
 import numpy as np
-from live_preview import publish
-from histogram_data import Summary
-from chunk_writer import ChunkWriter
+from stream_processing import T2Delays, Processor, NativeProcessor
 
 
 def atomic_json(path, value, sync=True):
@@ -20,29 +18,24 @@ def atomic_json(path, value, sync=True):
     temporary.replace(path)
 
 
-class T2Delays:
-    """Associate detector events with their preceding SYNC across block boundaries."""
-    def __init__(self):
-        self.last_sync = None
-        self.unreferenced = 0
+class OverrunMonitor:
+    """Read only new vendor-log bytes; buffer loss invalidates the recording immediately."""
+    def __init__(self, out): self.directory, self.offsets = out / 'snapi', {}
 
-    def decode(self, times, channels):
-        sync = times[channels == 0]
-        if self.last_sync is not None: sync = np.concatenate((np.array([self.last_sync], dtype=times.dtype), sync))
-        selected = (channels >= 1) & (channels <= 4)
-        photons, photon_channels = times[selected], channels[selected]
-        index = np.searchsorted(sync, photons, side='right') - 1
-        valid = index >= 0
-        self.unreferenced += int((~valid).sum())
-        if len(sync): self.last_sync = sync[-1]
-        return photons[valid].astype(np.float64) * 1e-12, (photons[valid] - sync[index[valid]]).astype(np.float64), photon_channels[valid]
+    def check(self):
+        for path in self.directory.rglob('*.log'):
+            with path.open(errors='replace') as log:
+                log.seek(self.offsets.get(path, 0))
+                text = log.read()
+                self.offsets[path] = log.tell()
+            if any(term in text.lower() for term in ('buffer overrun', 'buffer full', 'cnts_dropped')):
+                raise RuntimeError('snAPI buffer overflow: events were dropped; recording stopped, saved data will be plotted as incomplete')
 
 
 def stream_events(sn, measurement, settings, profile, out, rates, check_health=None):
     background = profile.get('kind') == 'background'
     t2 = profile.get('mode', 'T3') == 'T2'
     resolution = float(profile['bin_width_ps']) if t2 else float(sn.deviceConfig['Resolution'])
-    decoder = T2Delays() if t2 else None
     if not t2 and resolution != profile['expected_bin_width_ps']:
         raise RuntimeError(f'Unexpected resolution: {resolution} ps')
     capacity = profile['max_records']
@@ -57,8 +50,15 @@ def stream_events(sn, measurement, settings, profile, out, rates, check_health=N
                     sync_rate_for_timestamps_hz=float(rates[0]),
                     sync_rate_source='T2 absolute picosecond timestamps' if t2 else 'pre-capture SYNC rate (fixed throughout run)',
                     max_block_records=0, max_read_interval_s=0.0)
-    writer = ChunkWriter(out, profile, progress)
-    summary = Summary(profile, settings['plot']) if 'plot' in settings else None
+    processor_type = NativeProcessor if os.environ.get('LIDAR_RUNTIME_DIR') else Processor
+    processor = processor_type(out, settings, profile, rates, float(sn.deviceConfig['BaseResolution']) if profile.get('raw_t2') else resolution, progress.copy())
+    processing_keys = ('blocks', 'committed_records', 'records', 'batches', 'elapsed_s', 'channel_counts',
+                       'unreferenced_events', 'motion_ready', 'buffered_records', 'processing_timings', 'summary_deferred',
+                       'raw_batches_saved', 'processing_pending_batches', 'processing_error')
+    def update_processing(result):
+        if 'processing_error' in result and 'processing_error' not in progress:
+            print(f'PROCESSING ERROR: {result["processing_error"]}; raw recording continues', flush=True)
+        progress.update({key: result[key] for key in processing_keys if key in result})
     atomic_json(out / 'stream-progress.json', progress)
     stopping = False
     def request_stop(signum, frame):
@@ -68,21 +68,30 @@ def stream_events(sn, measurement, settings, profile, out, rates, check_health=N
     started = time.monotonic()
     last_read = started
     last_tick = -1
+    last_flush = started
+    overruns = OverrunMonitor(out)
     stop_reason = None
     try:
-        requested = 'until motion completes' if settings.get('motion') else f'{profile["duration_ms"] / 1000:g} s requested'
+        open_ended = bool(settings.get('motion')) and check_health is not None
+        requested = 'until motion completes' if open_ended else f'{profile["duration_ms"] / 1000:g} s requested'
         print(f'STARTING acquisition: {requested}; waiting for hardware and buffered events', flush=True)
-        if not measurement.startBlock(acqTime=0 if settings.get('motion') else profile['duration_ms'], size=capacity, savePTU=profile['save_ptu']):
+        if not measurement.startBlock(acqTime=0 if open_ended else profile['duration_ms'], size=capacity, savePTU=profile['save_ptu']):
             raise RuntimeError('Continuous block acquisition failed')
         while True:
-            motion_done = check_health() if check_health is not None else False
+            overruns.check()
+            if isinstance(processor, NativeProcessor): update_processing(processor.status())
+            motion_done = check_health() if check_health is not None and not stopping and stop_reason is None else False
             if (stopping or motion_done) and stop_reason is None:
                 stop_reason = 'user' if stopping else 'motion_complete'
                 progress.update(motion_ready=False, status='stopping')
                 atomic_json(out / 'stream-progress.json', progress, sync=False)
                 measurement.stopMeasure()
             finished = measurement.isFinished()
-            packed, channels = (np.array(x, copy=True) for x in measurement.getBlock())
+            read_started = time.monotonic()
+            block = measurement.getBlock()
+            packed, channels = (block, np.empty(0, dtype=np.uint8)) if profile.get('raw_t2') else block
+            # snAPI owns these views until the next getBlock; save them before reuse.
+            progress['max_get_block_s'] = max(progress.get('max_get_block_s', 0), time.monotonic()-read_started)
             now = time.monotonic()
             progress['max_read_interval_s'] = max(progress['max_read_interval_s'], now-last_read)
             last_read = now
@@ -90,36 +99,29 @@ def stream_events(sn, measurement, settings, profile, out, rates, check_health=N
             if len(packed):
                 progress['input_records'] += len(packed)
                 progress['max_block_records'] = max(progress['max_block_records'], len(packed))
-                if background:
-                    selected = (channels >= 1) & (channels <= 4)
-                    elapsed, delay, channels = packed[selected].astype(np.float64)*1e-12, None, channels[selected]
-                elif t2:
-                    elapsed, delay, channels = decoder.decode(packed, channels)
-                    progress['unreferenced_events'] = decoder.unreferenced
-                else:
+                if not background and not t2:
                     delay = measurement.dTime_T3(packed).astype(np.float64) * resolution
-                    elapsed = measurement.nSync_T3(packed).astype(np.float64) / rates[0] + delay * 1e-12
-                writer.add(elapsed, delay, channels)
-                if summary is not None: summary.add(elapsed, delay, channels)
-                if 'plot' in settings:
-                    try:
-                        publish(out, delay, channels, profile, settings['plot']['channel'], progress['batches'], elapsed)
-                    except OSError as error: print(f'PREVIEW could not update: {error}', flush=True)
-                progress['motion_ready'] = not finished and bool(len(elapsed)) and (background or bool(np.any(delay < 1e12 / rates[0])))
-                progress['batches'] += 1
-                progress['records'] += len(channels)
-                progress['elapsed_s'] = max(progress['elapsed_s'], float(elapsed.max()) if len(elapsed) else 0)
-                counts = np.bincount(channels, minlength=5)
-                for i in range(5): progress['channel_counts'][i] += int(counts[i])
-            writer.flush_due()
+                    packed = np.array([measurement.nSync_T3(packed).astype(np.float64) / rates[0] + delay * 1e-12, delay])
+                processing_started = time.monotonic()
+                result = processor.process(packed, channels, finished)
+                progress['max_processing_handoff_s'] = max(progress.get('max_processing_handoff_s', 0), time.monotonic()-processing_started)
+                update_processing(result)
+            if not isinstance(processor, NativeProcessor) and not len(packed) and progress.get('buffered_records') and now-last_flush >= profile.get('chunk_seconds', 5):
+                update_processing(processor.flush())
+                last_flush = now
             # Read once more after isFinished becomes true; this iteration is that final drain.
             progress['wall_elapsed_s'] = now-started
             if finished:
-                writer.flush()
                 if stop_reason is None: progress['elapsed_s'] = profile['duration_ms'] / 1000
                 else:
                     progress['elapsed_s'] = max(progress['elapsed_s'], now-started)
-                if summary is not None and progress['elapsed_s'] <= summary.te[-1]: summary.save(out, progress['elapsed_s'])
+                duration = progress['elapsed_s']
+                progress.update(status='processing', motion_ready=False)
+                atomic_json(out / 'stream-progress.json', progress, sync=False)
+                print('ACQUISITION STOPPED; finishing processing of saved batches', flush=True)
+                update_processing(processor.flush(duration))
+                progress['elapsed_s'] = max(duration, progress['elapsed_s'])
+                progress['motion_ready'] = False
                 progress['status'] = 'stopped' if stop_reason else 'acquired'
                 progress['stop_reason'] = stop_reason or 'duration'
                 atomic_json(out / 'stream-progress.json', progress)
@@ -131,18 +133,21 @@ def stream_events(sn, measurement, settings, profile, out, rates, check_health=N
                 raise RuntimeError('Disk reserve reached; committed blocks are preserved')
             tick = int(now-started)
             if tick != last_tick:
-                print(f'STREAM {progress["committed_records"]} detector events saved; {writer.used} buffered; latest detector timestamp {progress["elapsed_s"]:.3f} s; {now-started:.1f} s wall time including startup', flush=True)
+                print(f'STREAM {progress.get("raw_batches_saved", 0)} raw batches saved; {progress.get("processing_pending_batches", 0)} awaiting processing; {progress["committed_records"]} detector events saved; {progress.get("buffered_records", 0)} buffered; latest detector timestamp {progress["elapsed_s"]:.3f} s; {now-started:.1f} s wall time including startup', flush=True)
                 last_tick = tick
-            time.sleep(interval)
+            time.sleep(max(0, interval - (time.monotonic()-now)))
     except BaseException as error:
+        try: measurement.stopMeasure()
+        except Exception as stop_error: progress['stop_error'] = str(stop_error)
         try:
-            writer.flush()
-        except OSError as disk_error: progress['chunk_write_error'] = str(disk_error)
-        progress['uncommitted_records'] = writer.used
+            update_processing(processor.flush())
+        except Exception as disk_error: progress['chunk_write_error'] = str(disk_error)
+        progress['uncommitted_records'] = progress.get('buffered_records', 0)
         progress.update(status='failed', error=f'{type(error).__name__}: {error}')
         atomic_json(out / 'stream-progress.json', progress)
         raise
     finally:
+        processor.close()
         for sig, handler in previous.items(): signal.signal(sig, handler)
     return dict(bin_width_ps=resolution, records=progress['records'], channel_counts=progress['channel_counts'],
                 sync_rate_for_timestamps_hz=float(rates[0]), sync_rate_source=progress['sync_rate_source'],
