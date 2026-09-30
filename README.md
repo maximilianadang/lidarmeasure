@@ -171,8 +171,7 @@ mode a valid batch requires a pulse-relative return; background mode uses detect
 events without SYNC. This is software coordination, not a shared hardware trigger.
 
 After the initial valid batch, lidar progress age and missing/delayed batches do
-not cancel mount motion. Astromount's arrival/progress timeouts, feedback and
-workspace checks remain active. Acquisition errors do not cancel a sequence that has started: cleanup waits for
+not cancel mount motion. Astromount's overall timeout, target heartbeat, direction and device-status checks remain active. Acquisition errors do not cancel a sequence that has started: cleanup waits for
 its completion or an astromount fault. Explicit Ctrl+C still requests a mount stop. A mount helper failure propagates to acquisition
 on its next polling iteration. Stop commands cannot guarantee stopping after power/USB loss; keep the physical stop
 available during testing. Motion is always stopped before the mount connection closes.
@@ -238,17 +237,18 @@ it does not duplicate controller defaults. Custom LiDAR profiles may explicitly
 override motion values; CLI overrides take precedence. Controller limits live
 under `motion` in astromount's file: `deadband` is
 0.01° (`--deadband` overrides it). Software excursion limits and stopping margins
-have been removed, including the former ±22.5° kinematic cap. IK still selects
-the front-facing branch and rejects singular/rear-facing targets. Operation
+have been removed, including the former ±22.5° kinematic cap. IK accepts all
+pointing directions using a canonical solution, not nearest-joint branch planning;
+crossing branches or singularities can cause large joint changes. Operation
 requires visual supervision and an accessible E-stop; there is no software
 collision or travel envelope. Firmware/mechanical restrictions are unchanged.
 Resolved values are passed to both dry-run validation and the live controller,
 and saved in run settings. Invalid combinations fail the controller's existing
 validation; they are never silently clamped. Gain (`kp`), default rate (`max_speed`),
-speed ceiling (`speed_limit`), loop period (`period`), sample age (`max_sample_age`),
-arrival/progress timeouts (`timeout`, `progress_timeout`), settling (`settle_samples`),
+speed ceiling (`speed_limit`), loop period (`period`),
+arrival timeout (`timeout`), settling (`settle_samples`),
 and streaming-worker `heartbeat` are defined here too. Times are seconds and angles
-are degrees. CLI options use hyphens, e.g. `--progress-timeout`; `--speed` on point.py
+are degrees. CLI options use hyphens, e.g. `--speed-limit`; `--speed` on point.py
 overrides the default rate. The physical command ceiling remains at most 3°/s.
 
 CSV input cannot be combined
@@ -315,3 +315,7 @@ recording continues without motion for the sum of the CSV waypoint durations.
 The reason is saved in `mount-status.json` and `summary.json`; range/count plots
 are still generated, and the motion plot is skipped. Mount travel limits remain
 enforced. Once a helper starts successfully, normal motion-completion timing applies.
+
+No-progress and stale-feedback aborts have been removed from the shared mount
+controller, along with their settings/CLI options. The target heartbeat checks
+planner updates only; it does not verify fresh position feedback or movement.

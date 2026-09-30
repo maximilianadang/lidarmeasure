@@ -47,7 +47,8 @@ def lin_interp(X_in, X_ref, Y_ref):
 
 
 
-my_path='/home/dusty/workspace/terraforming_mars/lidarmeasure/output/20260916T222655034331Z-measurement/'
+my_path='/home/dusty/workspace/terraforming_mars/lidarmeasure/output/20260917T020513587971Z-measurement/'
+
 with np.load(my_path+'/waterfall.npz') as data:
     t= data['time_edges_s']
     C=data['counts']
@@ -89,11 +90,11 @@ for ti in range(len(t)-1):
     C[ti,:]=denoise_poisson(C[ti,:])        #De-noising
     #C[ti,:]=C[ti,:]*X**2                    #Range correction 
 
-
+print('Run is %g s long'%(t[-1]))
 t_start=0
 t_end=10
 vmin=0
-vmax=50
+vmax=20
 its= np.argmin(np.abs(t-t_start))
 ite= np.argmin(np.abs(t-t_end))
 if its==ite:ite+=1
@@ -113,7 +114,7 @@ plt.plot([t[ite],t[ite]],[0,50],':w',lw=1)
 plt.ylabel('X [m]')
 ax.xaxis.set_major_locator(MultipleLocator(2))
 ax.xaxis.set_minor_locator(MultipleLocator(0.25))
-plt.xlim([0,14])
+#plt.xlim([0,14])
 plt.ylim([0,30])
 
 ax=plt.subplot(gs[2,0])
