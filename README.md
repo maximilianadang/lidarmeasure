@@ -96,7 +96,12 @@ a later helper failure marks the run failed while preserving lidar data.
 
 ## Saved-data tools and diagnostics
 
+Run `plot_waterfall.py` without a directory to replot the newest saved capture
+with detector data in the configured output directory. An interrupted run with
+saved events qualifies. Pass a directory to select a specific capture.
+
 ```bash
+/usr/bin/python3 -I plot_waterfall.py
 /usr/bin/python3 -I plot_waterfall.py output/RUN --start-seconds 2 --end-seconds 3 --color-max 25
 /usr/bin/python3 -I plot_waterfall.py output/RUN --counts-over-r4
 /usr/bin/python3 -I live_preview.py output/RUN

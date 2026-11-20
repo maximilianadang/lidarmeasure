@@ -13,6 +13,24 @@ from matplotlib import pyplot as plt
 from range_transform import weight_counts
 
 from histogram_data import capture_histograms
+from run_paths import ROOT, read_settings
+
+
+def latest_capture(output):
+    runs = sorted(output.glob('[0-9]*T*Z*'), key=lambda run: run.name.split('Z', 1)[0], reverse=True)
+    for run in runs:
+        if not (run / 'lidar-settings.json').is_file():
+            continue
+        progress = run / 'stream-progress.json'
+        if progress.is_file():
+            if not (run / 'blocks' / '00000000.npz').is_file():
+                continue
+            state = json.loads(progress.read_text())
+            if state.get('blocks', 0) > 0 and state.get('status') not in ('acquiring', 'stopping', 'processing'):
+                return run
+        elif (run / 'decoded-events.npz').is_file():
+            return run
+    return None
 
 
 def plot_capture(directory, start_s=None, end_s=None, raw_counts=True, color_max=None):
@@ -96,7 +114,8 @@ def plot_capture(directory, start_s=None, end_s=None, raw_counts=True, color_max
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('capture_directory', type=Path)
+    parser.add_argument('capture_directory', nargs='?', type=Path,
+                        help='Capture directory (default: newest saved capture with detector data)')
     parser.add_argument('--start-seconds', type=float, help='Histogram interval start; waterfall always shows full capture')
     parser.add_argument('--end-seconds', type=float, help='Histogram interval end (exclusive)')
     colors = parser.add_mutually_exclusive_group()
@@ -106,4 +125,11 @@ if __name__ == '__main__':
                         help='Divide photon counts by range to the fourth power')
     parser.add_argument('--color-max', type=float, help='Colorbar maximum; larger values saturate (default: automatic)')
     args = parser.parse_args()
-    plot_capture(args.capture_directory, args.start_seconds, args.end_seconds, args.raw_counts, args.color_max)
+    directory = args.capture_directory
+    if directory is None:
+        settings = read_settings(ROOT / 'lidar-settings.json')
+        output = Path(settings.get('output_dir', ROOT / 'output'))
+        directory = latest_capture(output)
+        if directory is None:
+            parser.error(f'No saved capture with detector data in {output}. Pass a capture directory explicitly.')
+    plot_capture(directory, args.start_seconds, args.end_seconds, args.raw_counts, args.color_max)
