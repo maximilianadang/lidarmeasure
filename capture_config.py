@@ -4,6 +4,7 @@ import configparser
 import json
 import math
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from run_paths import read_settings
 
@@ -25,6 +26,8 @@ def load_settings(profile_name, argv=None, moving=False):
         motion = settings['motion'] = {**motion_defaults(), **motion}
         add_arguments(parser, path_required=not bool(motion.get('path')), defaults=motion,
                       delta_help='Accumulate deltas from initial measured pointing and planned endpoints')
+        parser.add_argument('--wind-scan', type=Path,
+                            help='Use a surveyed live downwind scan configuration and the sweep CSV timing')
     args = parser.parse_args(argv)
     if motion:
         if 'targets' in motion or 'speed_deg_s' in motion: raise ValueError('Use sweep CSV input for lidarmove')
@@ -35,6 +38,14 @@ def load_settings(profile_name, argv=None, moving=False):
                                for az, el, duration in read_waypoints(csv_path)])
         motion.update(controller_values(args))
         motion['driver'] = 'sweep.py'
+        if args.wind_scan:
+            if args.delta: raise ValueError('--wind-scan uses absolute pointing')
+            from mount_motion import downwind_module
+            wind_path = args.wind_scan.resolve()
+            wind = json.loads(wind_path.read_text())
+            if 'wind_reader' in wind:
+                wind['wind_reader'] = str((wind_path.parent / wind['wind_reader']).resolve())
+            motion['wind_scan'] = asdict(downwind_module().DownwindScanConfig(**wind))
         settings['mount'].update(port=args.port, baseline=str(args.baseline.resolve()),
                                  pitch_sign=FRAME.pitch_sign, yaw_sign=FRAME.yaw_sign)
         motion['sweep_argv'] = ['--path', str(csv_path), '--timeout', str(args.timeout), '--port', args.port,

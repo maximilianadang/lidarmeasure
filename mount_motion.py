@@ -1,7 +1,18 @@
 """Mount-only motion orchestration; acquisition remains owned by acquisition.py."""
 import json
 import math
+import sys
+from contextlib import ExitStack
 from dataclasses import asdict
+from pathlib import Path
+
+
+def downwind_module():
+    source = str(Path(__file__).resolve().parents[1] / 'lidar-feedback' / 'src')
+    if source not in sys.path:
+        sys.path.insert(0, source)
+    from lidar_feedback import downwind
+    return downwind
 
 
 def validate_motion(motion):
@@ -40,7 +51,8 @@ def run_motion(out, config, reference, frame, stop):
     settings = Settings(**values)
     targets = motion['targets']
     points = [{k: v for k, v in target.items() if k != 'duration_s'} for target in targets]
-    if not motion.get('delta'):
+    fixed_targets = not motion.get('delta') and 'wind_scan' not in motion
+    if fixed_targets:
         for point in points: frame.inverse(**point)
     with (out / 'mount-coordinates.jsonl').open('w') as output:
         class LoggedMount(Mount):
@@ -52,7 +64,7 @@ def run_motion(out, config, reference, frame, stop):
                 return row['hour_angle_deg'], row['declination_deg'], row['status']
         with LoggedMount(config['port'], timeout=.3) as mount:
             control = Controller(mount, reference, positive_directions=motion['positive_directions'], settings=settings)
-            if not motion.get('delta'):
+            if fixed_targets:
                 for point in points: settings.validate_target(*frame.inverse(**point))
             control.read()  # Read-only preflight before signalling readiness.
             print('READY', flush=True)
@@ -60,15 +72,23 @@ def run_motion(out, config, reference, frame, stop):
                 control.read()
                 stop.wait(config['interval_s'])
             if stop.is_set(): return
-            (out / 'motion-started').touch()
-            print('MOTION starting after verified acquisition batch', flush=True)
             try:
                 waypoints = [(target['azimuth'], target['elevation'], target['duration_s']) for target in targets]
                 with sweep_log(dict(waypoints=waypoints, delta=motion.get('delta', False),
                                     settings=asdict(settings), frame=asdict(frame), reference=asdict(reference),
-                                    positive_directions=motion['positive_directions'], port=config['port']),
-                               path=out / 'logs/sweep.jsonl') as log:
-                    sweep(control, frame, waypoints, delta=motion.get('delta', False), log=log, cancel=stop)
+                                    positive_directions=motion['positive_directions'], port=config['port'],
+                                    wind_scan=motion.get('wind_scan')),
+                               path=out / 'logs/sweep.jsonl') as log, ExitStack() as inputs:
+                    kwargs = {}
+                    if 'wind_scan' in motion:
+                        downwind = downwind_module()
+                        wind = downwind.DownwindScanConfig(**motion['wind_scan'])
+                        durations = [point[2] for point in waypoints]
+                        kwargs['target_at'] = inputs.enter_context(downwind.wind_targets(wind, durations, stop, log))
+                    if stop.is_set(): return
+                    (out / 'motion-started').touch()
+                    print('MOTION starting after verified acquisition batch', flush=True)
+                    sweep(control, frame, waypoints, delta=motion.get('delta', False), log=log, cancel=stop, **kwargs)
                 if not stop.is_set():
                     (out / 'motion-complete').touch()
                     print('MOTION complete; stopping acquisition', flush=True)
