@@ -64,6 +64,7 @@
   "preview": {
     "enabled": true,
     "port": 8766,
+    "ssh_target": "dusty@ubuntu.local",
     "refresh_ms": 500
   }
 }

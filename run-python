@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -z "${LIDAR_LAUNCH_MODE:-}" ]]; then
+  exec python3 -I "$repo_dir/remote_run.py" "$@"
+fi
 export LIDAR_RUNTIME_DIR="${LIDAR_RUNTIME_DIR:-$repo_dir/.runtime}"
 if [[ ! -x "$LIDAR_RUNTIME_DIR/qemu-current/usr/bin/qemu-x86_64" ]]; then
   echo "Runtime missing. Set LIDAR_RUNTIME_DIR or follow docs/arm64-setup.md." >&2

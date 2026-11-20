@@ -130,9 +130,15 @@ def run(profile_name, moving=False):
     write_json(out / 'summary.json', summary)
     duration_label = 'until motion completes' if moving else f'{profile["duration_ms"]} ms'
     print(f'RUN {profile_name}: {duration_label}; settings {settings["settings_source"]}; output {out}', flush=True)
+    preview_started = False
     with ExitStack() as services:
         try:
-            if 'window_ms' in profile: services.enter_context(preview_server(settings, out))
+            if 'window_ms' in profile:
+                try:
+                    preview_started = services.enter_context(preview_server(settings, out))
+                except (OSError, RuntimeError) as error:
+                    summary['preview_start_error'] = str(error)
+                    print(f'Live preview unavailable. Continuing acquisition without it. {error}', flush=True)
             print('INITIALIZING device and applying settings', flush=True)
             with device_session(settings, profile, out) as (sn, measurement):
                 time.sleep(.3)
@@ -196,7 +202,7 @@ def run(profile_name, moving=False):
         (output / pointer).write_text(str(out))
         print('COMPLETE', out, flush=True)
         try:
-            if not moving and 'window_ms' in profile and settings.get('preview', {}).get('enabled', True):
+            if not moving and preview_started:
                 print('Recording finished. Preview remains at http://localhost:'
                       f"{settings.get('preview', {}).get('port', 8765)} — Ctrl+C to close.", flush=True)
                 while True:

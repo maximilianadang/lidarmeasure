@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -9,6 +10,48 @@ from capture_config import load_settings
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_preview_start_failure_still_records_and_plots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = dict(output_dir=root, settings_source='test.json')
+            profile = dict(duration_ms=100, window_ms=100, mode='T2')
+            sn = Mock(deviceConfig={})
+            sn.getCountRates.return_value.tolist.return_value = [1000000, 1]
+
+            def snapshot(settings, out):
+                for name in ('lidar-settings.json', 'device.ini', 'system.ini', 'system-source.ini'):
+                    (out / name).write_text('{}')
+
+            def capture(sn, measurement, settings, profile, out, rates):
+                (out / 'blocks').mkdir()
+                (out / 'blocks/00000000.npz').touch()
+                return {'records': 1}
+
+            with (
+                patch('acquisition.load_settings', return_value=(settings, profile)),
+                patch('acquisition.snapshot_settings', snapshot),
+                patch('acquisition.preview_server', side_effect=RuntimeError('Address already in use')),
+                patch('acquisition.device_session', return_value=nullcontext((sn, Mock()))),
+                patch('acquisition.record_mount', return_value=nullcontext()),
+                patch('acquisition.events', side_effect=capture) as events,
+                patch('acquisition.check_rates'),
+                patch('acquisition.check_acquisition', return_value={}),
+                patch('acquisition.measurement_clock', return_value={}),
+                patch('acquisition.generate_plots') as plot,
+                patch.dict('os.environ', LIDAR_RUNTIME_DIR='/tmp', LIDAR_RUN_DIR=''),
+                patch('acquisition.time.sleep') as sleep,
+            ):
+                acquisition.run('measurement')
+
+            out = Path((root / 'latest-measurement.txt').read_text())
+            summary = json.loads((out / 'summary.json').read_text())
+            self.assertEqual(summary['status'], 'complete')
+            self.assertEqual(summary['records'], 1)
+            self.assertEqual(summary['preview_start_error'], 'Address already in use')
+            events.assert_called_once()
+            plot.assert_called_once_with(out, script='plot_waterfall.py')
+            sleep.assert_called_once_with(.3)
+
     def test_motion_dry_run_delegates_to_sweep_without_hardware(self):
         settings, profile = load_settings('measurement', ['--dry-run'], moving=True)
         with patch('acquisition.load_settings', return_value=(settings, profile)), patch('subprocess.run') as run, patch('acquisition.device_session') as device:

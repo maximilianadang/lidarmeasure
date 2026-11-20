@@ -2,10 +2,26 @@
 from contextlib import contextmanager
 import argparse
 import json
+import os
 from pathlib import Path
+import shlex
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from native_process import background
+from run_paths import ROOT, read_settings
+
+
+PREVIEW_HOST = '127.0.0.1'
+PREVIEW_READY = f'Live preview: http://{PREVIEW_HOST}:'
+
+
+def preview_ssh_target(config=None):
+    return (config or {}).get('ssh_target') or read_settings(ROOT / 'lidar-settings.json')['preview']['ssh_target']
+
+
+def preview_forward_args(port, target):
+    return ['-N', '-o', 'ExitOnForwardFailure=yes', '-L',
+            f'{PREVIEW_HOST}:{port}:{PREVIEW_HOST}:{port}', '--', target]
 
 
 def publish(out, delay_ps, channels, profile, channel, batch, elapsed=None):
@@ -34,13 +50,18 @@ def publish(out, delay_ps, channels, profile, channel, batch, elapsed=None):
 def preview_server(settings, out):
     config = settings.get('preview', {})
     if not config.get('enabled', True):
-        yield
+        yield False
         return
+    port = config.get('port', 8765)
     command = ['/usr/bin/python3', '-I', '-u', str(Path(__file__).resolve()), str(out),
-               '--port', str(config.get('port', 8765)), '--refresh-ms', str(config.get('refresh_ms', 500))]
-    with background(command, out / 'logs/preview.log', 'Live preview:') as message:
+               '--port', str(port), '--refresh-ms', str(config.get('refresh_ms', 500))]
+    with background(command, out / 'logs/preview.log', PREVIEW_READY) as message:
         print(message, flush=True)
-        yield
+        if os.environ.get('LIDAR_LAUNCH_MODE') != 'ssh':
+            tunnel = shlex.join(['ssh', *preview_forward_args(port, preview_ssh_target(config))])
+            print(f'Run this in a terminal on your computer and leave it open:\n{tunnel}\n'
+                  'Then open the live preview URL above in your browser.', flush=True)
+        yield True
 
 
 def serve(directory, port, refresh_ms):
@@ -69,8 +90,8 @@ def serve(directory, port, refresh_ms):
                 self.wfile.write(body)
             except (BrokenPipeError, ConnectionResetError): pass
 
-    with HTTPServer(('127.0.0.1', port), Handler) as server:
-        print(f'Live preview: http://127.0.0.1:{server.server_port} (forward this port over SSH)', flush=True)
+    with HTTPServer((PREVIEW_HOST, port), Handler) as server:
+        print(f'{PREVIEW_READY}{server.server_port}', flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt: pass

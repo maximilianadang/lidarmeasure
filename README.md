@@ -5,23 +5,26 @@ with bounded RAM, chunked disk writes, and a browser preview over SSH.
 
 ## Run
 
-Connect from your computer with port forwarding:
+From your local checkout or from the checkout on Dusty (`dusty@ubuntu.local`):
 
 ```bash
-ssh -L 8766:127.0.0.1:8766 dusty@ORIN_HOST
-```
-
-On the Orin:
-
-```bash
-cd ~/workspace/terraforming_mars/lidarmeasure
 ./run-python lidarmeasure.py
 ```
 
-Open http://localhost:8766 in your computer's browser. The command starts the
-preview for its own run folder before opening the lidar. After recording and
-plotting finish, the preview remains open until Ctrl+C. Refresh for a new run.
-During acquisition, Ctrl+C requests a stop and final drain; SIGKILL cannot drain.
+From another computer, the launcher runs the command in
+`~/workspace/terraforming_mars/lidarmeasure` on Dusty. The run files and any paths
+you pass, including `--settings`, are on Dusty. Use an interactive terminal for
+Ctrl+C to reach the remote recorder. Once Dusty reports that the preview is
+ready, the launcher opens a separate SSH tunnel and launches your local browser.
+The automatic tunnel uses non-interactive SSH authentication. A tunnel or
+browser failure leaves the run active.
+
+When launching from a shell on Dusty, open the loopback URL if your browser is
+on Dusty. If your browser is on another computer, run the printed SSH tunnel
+command there. A viewer startup failure is recorded in `summary.json` and
+acquisition continues. After a normal recording and plotting finish, a running
+preview stays open until Ctrl+C. During acquisition, Ctrl+C requests a stop and
+final drain.
 
 ## Configuration
 
@@ -37,7 +40,8 @@ During acquisition, Ctrl+C requests a stop and final drain; SIGKILL cannot drain
 - `save_ptu`: optionally retain the vendor PTU stream; normally false.
 - `plot`: channel, calibration, delay/range bounds, and selected histogram interval.
 - `mount`: enable sampling, sibling repository, port, baseline, signs, and sample period.
-- `preview`: enable webpage, loopback port (8766), refresh period (500 ms).
+- `preview`: enable webpage, loopback port (8766), refresh period (500 ms),
+  and `ssh_target` (`user@host`) for the remote launcher and printed tunnel command.
 - `system_ini`, `device_ini`: vendor paths/logging and hardware input settings.
 
 Laser repetition rate is set externally; `expected_sync_rate_hz` checks it.
